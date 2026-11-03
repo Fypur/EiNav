@@ -206,7 +206,7 @@ class RobotCamera:
 
     def _read_frame(self):
         if self.kind == "picamera":
-            frame = next(self._stream).array
+            frame = cv2.flip(next(self._stream).array,0)
             self._raw.truncate(0)
             return frame
         if self.kind == "picamera2":

@@ -6,7 +6,7 @@ class Control:
 
     def __init__(self, serial: Serial) -> None:
         self.serial = serial
-        self.kp = 0.3
+        self.kp = 0.15
         self.turn_duration = 1.5  # Duration of a 90-degree turn in seconds
         self.turn_speed = 0.8
 
@@ -14,13 +14,13 @@ class Control:
         """Stops all motors."""
         self.serial.send_wheel_speeds(0.0, 0.0, 0.0, 0.0)
 
-    def forward(self, speed: float = 0.8):
+    def forward(self, speed: float = 0.1):
         """Moves robot forward."""
         self.serial.send_wheel_speeds(speed, speed, speed, speed)
 
     def aim(self, error: float):
         correction = error * self.kp
-        base_speed = 0.6
+        base_speed = 0.4
         left_speed = base_speed + correction
         right_speed = base_speed - correction
 
