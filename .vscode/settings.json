@@ -1,1 +1,4 @@
-{"cmake.sourceDirectory": "/home/f/EiNav/ws/src/msgs"}
+{
+    "cmake.sourceDirectory": "/home/f/EiNav/ws/src/msgs",
+    "python-envs.defaultEnvManager": "ms-python.python:system"
+}
