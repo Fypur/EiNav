@@ -36,8 +36,7 @@ def run_state_machine(connection, serial, mode: Mode = Mode.HUIT):
     end_pos = (2, 2)
     robot_dir = Direction.EAST
 
-    path, path_directions_dict = nav.generate_path(grid, start_pos, end_pos, robot_dir)
-    path_directions = [path_directions_dict[coord] for coord in path[:-1]]
+    path = nav.generate_path(grid, start_pos, end_pos, robot_dir)
 
     robot_state = RobotState.FOLLOWING
     action_start_time = 0.0
@@ -73,17 +72,45 @@ def run_state_machine(connection, serial, mode: Mode = Mode.HUIT):
 
             elif robot_state == RobotState.STOP_ON_INTERSECTION:
                 controller.stop()
-                next_dir = path_directions.pop(0) if path_directions else None
+                next_dir = path.pop(0) if path else None
                 action_start_time = current_time
 
-                if next_dir == '>':
-                    robot_state = RobotState.TURNING_90
-                elif next_dir == '<':
-                    robot_state = RobotState.TURNING_MINUS_90
-                elif next_dir == '^':
-                    robot_state = RobotState.FOLLOWING
-                elif next_dir == 'v':
-                    robot_state = RobotState.TURNING_180
+                if next_dir == Direction.NORTH:
+                    if robot_dir == Direction.NORTH:
+                        robot_state = RobotState.FOLLOWING
+                    elif robot_dir == Direction.EAST:
+                        robot_state = RobotState.TURNING_MINUS_90
+                    elif robot_dir == Direction.SOUTH:
+                        robot_state = RobotState.TURNING_180
+                    elif robot_dir == Direction.WEST:
+                        robot_state = RobotState.TURNING_90
+                elif next_dir == Direction.SOUTH:
+                    if robot_dir == Direction.NORTH:
+                        robot_state = RobotState.TURNING_180
+                    elif robot_dir == Direction.EAST:
+                        robot_state = RobotState.TURNING_90
+                    elif robot_dir == Direction.SOUTH:
+                        robot_state = RobotState.FOLLOWING
+                    elif robot_dir == Direction.WEST:
+                        robot_state = RobotState.TURNING_MINUS_90
+                elif next_dir == Direction.EAST:
+                    if robot_dir == Direction.NORTH:
+                        robot_state = RobotState.TURNING_90
+                    elif robot_dir == Direction.EAST:
+                        robot_state = RobotState.FOLLOWING
+                    elif robot_dir == Direction.SOUTH:
+                        robot_state = RobotState.TURNING_MINUS_90
+                    elif robot_dir == Direction.WEST:
+                        robot_state = RobotState.TURNING_180
+                elif next_dir == Direction.SOUTH:
+                    if robot_dir == Direction.NORTH:
+                        robot_state = RobotState.TURNING_180
+                    elif robot_dir == Direction.EAST:
+                        robot_state = RobotState.TURNING_90
+                    elif robot_dir == Direction.SOUTH:
+                        robot_state = RobotState.FOLLOWING
+                    elif robot_dir == Direction.WEST:
+                        robot_state = RobotState.TURNING_MINUS_90
                 else:
                     robot_state = RobotState.FOLLOWING
 

@@ -158,7 +158,7 @@ class Navigation:
                     row_str += " . "
             print(row_str)
 
-        return path, path_directions
+        return path
 
 
 if __name__ == '__main__':
