@@ -50,6 +50,13 @@ st.markdown(
         #172438 12px, #172438 24px); border: 1px solid #334155;
         text-align:center; color:#cbd5e1; }
     .camera-icon { font-size: 2.5rem; }
+    .camera-full { position: relative; margin-bottom: 1.2rem; }
+    .camera-full img { display:block; width:100%; height:calc(100vh - 4rem);
+        object-fit:contain; image-rendering:pixelated; background:#000;
+        border-radius:13px; border:1px solid #334155; }
+    .camera-full a { position:absolute; top:.6rem; right:.8rem; padding:.25rem .6rem;
+        border-radius:8px; background:rgba(15,23,42,.75); color:#e2e8f0;
+        text-decoration:none; font-size:.85rem; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -285,12 +292,31 @@ with st.sidebar:
     st.divider()
     st.subheader("Modules")
     show_camera = st.toggle("Afficher la caméra", key="show_camera")
+    if show_camera:
+        stream_url = st.text_input("Adresse du flux", value=default_stream_url(), key="camera_url")
+        st.caption(
+            "Flux MJPEG diffusé par camera_pi.py. Si l'image reste vide, vérifier que le "
+            "programme du robot tourne et que l'adresse est celle du Raspberry Pi."
+        )
     st.caption("Tout est simulé : aucun moteur ni capteur n'est raccordé.")
     st.divider()
     st.subheader("Réseau")
     st.write("**Serveur :** Streamlit local")
     st.write("**Arduino :** non connecté")
     st.write(f"**Caméra :** flux MJPEG, port {CAMERA_STREAM_PORT}")
+
+if show_camera:
+    # Flux caméra sur toute la largeur et toute la hauteur de l'écran, sans déformation ;
+    # le tableau de bord reste accessible en faisant défiler la page vers le bas.
+    safe_url = html.escape(stream_url, quote=True)
+    page_url = html.escape(stream_url.rsplit("/", 1)[0] + "/", quote=True)
+    st.markdown(
+        '<style>.block-container { max-width: 100%; }</style>'
+        f'<div class="camera-full">'
+        f'<img src="{safe_url}" alt="Flux caméra indisponible">'
+        f'<a href="{page_url}" target="_blank" rel="noopener">⛶ plein écran</a></div>',
+        unsafe_allow_html=True,
+    )
 
 st.markdown('<div class="dashboard-kicker">Station de pilotage • Prototype V2</div>', unsafe_allow_html=True)
 st.title("Tableau de bord du robot")
@@ -391,25 +417,6 @@ with nav_tab:
             log("STOP demandé dans l'interface")
             st.rerun()
         st.caption("Ces commandes seront raccordées à l'Arduino ultérieurement.")
-
-    if show_camera:
-        st.divider()
-        st.subheader("📷 Visualisation caméra")
-        cam_left, cam_right = st.columns([1.5, 1])
-        with cam_right:
-            stream_url = st.text_input("Adresse du flux", value=default_stream_url(), key="camera_url")
-            st.write("**Source :** camera_pi.py (programme du robot)")
-            st.caption(
-                "Flux MJPEG diffusé par le robot. Si l'image reste vide, vérifier que le "
-                "programme du robot tourne et que l'adresse est celle du Raspberry Pi."
-            )
-        with cam_left:
-            st.markdown(
-                f'<img src="{html.escape(stream_url, quote=True)}" alt="Flux caméra indisponible" '
-                'style="width:100%; image-rendering:pixelated; border-radius:13px; '
-                'background:#121d2d; border:1px solid #334155; min-height:120px;">',
-                unsafe_allow_html=True,
-            )
 
 with edit_tab:
     st.subheader("Éditer le maillage cartésien (4 × 4)")

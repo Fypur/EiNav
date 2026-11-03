@@ -38,6 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import cv2
 
 RESOLUTION = (160, 128)  # (largeur, hauteur), même taille que les images de data/images_2025
+MAX_FULL_FOV_FPS = 40    # cadence max des modes capteur plein champ (binning 2x2)
 
 STREAM_PORT = 8000       # doit correspondre à CAMERA_STREAM_PORT dans frontend/app.py
 STREAM_FPS = 15          # images/s max envoyées au navigateur (économise le CPU du Pi)
@@ -45,9 +46,9 @@ JPEG_QUALITY = 80
 BOUNDARY = b"frame"
 
 _TEST_PAGE = b"""<!doctype html><html><head><meta charset="utf-8"><title>Camera robot</title>
-<style>body{background:#101b2d;color:#cbd5e1;font-family:sans-serif;text-align:center}
-img{width:min(95vw,640px);image-rendering:pixelated;border-radius:12px}</style></head>
-<body><h3>Flux camera du robot</h3><img src="/stream.mjpg" alt="flux indisponible"></body></html>"""
+<style>html,body{margin:0;height:100%;background:#000;color:#cbd5e1;font-family:sans-serif}
+img{display:block;width:100vw;height:100vh;object-fit:contain;image-rendering:pixelated}</style></head>
+<body><img src="/stream.mjpg" alt="flux camera indisponible"></body></html>"""
 
 
 class _HTTPServer(ThreadingHTTPServer):
@@ -157,15 +158,34 @@ class FrameStreamer:
         self._server.server_close()
 
 
+def _full_fov_mode_size(picam2):
+    """picamera2 : taille du mode capteur le plus rapide parmi ceux qui couvrent tout le capteur
+    (None si les modes ne peuvent pas être lus : libcamera choisira alors seul)."""
+    try:
+        modes = picam2.sensor_modes
+        area = lambda m: m["crop_limits"][2] * m["crop_limits"][3]
+        widest = max(area(m) for m in modes)
+        full_fov = [m for m in modes if area(m) == widest]
+        return min(full_fov, key=lambda m: m["size"][0] * m["size"][1])["size"]
+    except Exception as exc:  # pilote/caméra exotique : on ne bloque pas le robot
+        print(f"[camera] modes capteur illisibles ({exc}), champ de vision non garanti")
+        return None
+
+
 class RobotCamera:
     def __init__(self, resolution=RESOLUTION, framerate=32, stream=True, stream_port=STREAM_PORT):
         self.resolution = resolution
         try:
             from picamera import PiCamera
             from picamera.array import PiRGBArray
-            self._cam = PiCamera(sensor_mode=2)
-            self._cam.resolution = resolution
-            self._cam.framerate = framerate
+            # Champ de vision maximal : sensor_mode=4 = capteur entier lu en binning 2x2
+            # (caméra v1 : 1296x972, v2 : 1640x1232), jusqu'à ~40 images/s.
+            # Le mode 2 (pleine résolution) est limité à 15 images/s : en demandant plus,
+            # le firmware bascule sur un mode rapide RECADRÉ au centre du capteur.
+            # Mode, résolution et cadence sont passés ensemble pour que le mode soit respecté.
+            self._cam = PiCamera(sensor_mode=4, resolution=resolution,
+                                 framerate=min(framerate, MAX_FULL_FOV_FPS))
+            self._cam.zoom = (0.0, 0.0, 1.0, 1.0)   # aucun recadrage numérique
             self._raw = PiRGBArray(self._cam, size=resolution)
             self._stream = self._cam.capture_continuous(self._raw, format="bgr", use_video_port=True)
             self.kind = "picamera"
@@ -173,9 +193,19 @@ class RobotCamera:
             try:
                 from picamera2 import Picamera2
                 self._cam = Picamera2()
-                self._cam.configure(self._cam.create_video_configuration(
-                    main={"size": resolution, "format": "RGB888"}))  # RGB888 = octets BGR pour OpenCV
+                # Sans précision, libcamera choisit le plus petit mode capteur (souvent recadré) :
+                # on impose un mode qui couvre tout le capteur, puis un recadrage maximal.
+                raw_size = _full_fov_mode_size(self._cam)
+                config = self._cam.create_video_configuration(
+                    main={"size": resolution, "format": "RGB888"},  # RGB888 = octets BGR pour OpenCV
+                    raw={"size": raw_size} if raw_size else None,
+                    controls={"FrameRate": min(framerate, MAX_FULL_FOV_FPS)})
+                self._cam.configure(config)
                 self._cam.start()
+                try:
+                    self._cam.set_controls({"ScalerCrop": self._cam.camera_properties["ScalerCropMaximum"]})
+                except (KeyError, RuntimeError):
+                    pass
                 self.kind = "picamera2"
             except ImportError:
                 self._cam = cv2.VideoCapture(0)
