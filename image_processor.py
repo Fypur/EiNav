@@ -2,20 +2,26 @@ import cv2
 import numpy as np
 
 class ImageProcessor:
-    def __init__(self, camera):
+    def __init__(self, camera, use_webots = True):
         self.camera = camera
-        
+        self.use_webots = use_webots
+
+    def get_image(self) :
+        if self.use_webots :
+            cameraData = self.camera.getImage()
+            image = np.frombuffer(cameraData, np.uint8).reshape(
+                (self.camera.getHeight(), self.camera.getWidth(), 4)
+            )
+            return cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        else:
+            return self.camera.read()
+
     def process_frame(self):
         """
         Lit l'image de la caméra, applique le pipeline de traitement 
         et retourne les informations utiles (centre de la ligne cx, indicateur d'intersection, images de debug).
         """
-        cameraData = self.camera.getImage()
-        image = np.frombuffer(cameraData, np.uint8).reshape(
-            (self.camera.getHeight(), self.camera.getWidth(), 4)
-        )
-
-        image_bgr = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        image_bgr = self.get_image()
         h, w = image_bgr.shape[:2]
 
         # Définition de la Zone d'Intérêt (tiers inférieur)

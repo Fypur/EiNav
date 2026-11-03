@@ -68,7 +68,6 @@ class RobotCamera:
         else:
             self._cam.release()
 
-
 if __name__ == "__main__":
     # Test rapide sur le robot : python camera_pi.py  -> enregistre test_camera.png
     cam = RobotCamera()
