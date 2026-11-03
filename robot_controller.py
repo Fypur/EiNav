@@ -1,4 +1,5 @@
 import numpy as np
+from robot_state import RobotState
 
 class RobotController:
     def __init__(self, robot):
@@ -48,5 +49,5 @@ class RobotController:
         # Vérifie si la durée de rotation est écoulée
         if self.robot.getTime() - action_start_time > self.turn_duration:
             print("Rotation de 90° terminée. Reprise du suivi de ligne.")
-            return "FOLLOWING"
-        return "TURNING_90"
+            return RobotState.FOLLOWING
+        return RobotState.TURNING_90 if left else RobotState.TURNING_MINUS_90
