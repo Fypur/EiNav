@@ -80,13 +80,19 @@ def main():
                 robot_state = "FOLLOWING"
 
         elif robot_state == "STOP_ON_INTERSECTION":
-            path_directions.pop(0)
-            # si je dois touner alord stop et tourner
-            # sinon conitnuer tout droit
+            
             controller.set_motors_velocities(0, 0)
-            robot_state = "TURNING_90"
+            next_dir = path_directions[0] if path_directions else None
+            if next_dir == '>':
+                robot_state = "TURNING_90"
+            elif next_dir == '<':
+                robot_state = "TURNING_-90"
+            elif next_dir == '^':
+                robot_state = "FOLLOWING"
+            elif next_dir == 'v':
+                robot_state = "TURNING_180"
+                path_directions.pop(0)
             action_start_time = current_time
-            print("Arrêt complet. Début de la rotation de 90°.")
 
         elif robot_state == "TURNING_90":
             robot_state = controller.turn_90_degrees(left=True, action_start_time=action_start_time)
