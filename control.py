@@ -7,7 +7,7 @@ class Control:
     def __init__(self, serial: Serial) -> None:
         self.serial = serial
         self.kp = 0.3
-        self.turn_duration = 1.0  # Duration of a 90-degree turn in seconds
+        self.turn_duration = 1.5  # Duration of a 90-degree turn in seconds
         self.turn_speed = 0.8
 
     def stop(self):
