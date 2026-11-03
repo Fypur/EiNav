@@ -11,7 +11,7 @@ Une interface web **uniquement en Python / Streamlit**, utilisable depuis le nav
 - éditeur de la ligne blanche (courbe lisse Catmull-Rom ou segments droits), longueur totale, curseur de progression et avance virtuelle de 5 % ;
 - édition des coordonnées des 16 nœuds et de leurs arêtes ; sauvegarde dans `carte.json` ;
 - édition et sauvegarde de la ligne dans `ligne_blanche.json` ;
-- panneau caméra optionnel (image de test, aucun flux réel) et journal des interactions.
+- panneau caméra optionnel : flux vidéo réel du robot, diffusé par `camera_pi.py` (MJPEG, `http://IP_DU_PI:8000/stream.mjpg`) quand le programme du robot tourne ; journal des interactions.
 
 ## Installation et lancement
 

@@ -5,6 +5,7 @@ Simulation graphique uniquement : aucune communication avec Arduino ni caméra r
 
 from __future__ import annotations
 
+import html
 import json
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ MAP_FILE = BASE_DIR / "carte.json"
 LINE_FILE = BASE_DIR / "ligne_blanche.json"
 MODE_NAV = "Navigation sur le maillage"
 MODE_LINE = "Suivi de ligne blanche"
+CAMERA_STREAM_PORT = 8000  # doit correspondre à STREAM_PORT dans camera_pi.py
 
 st.set_page_config(
     page_title="Robot | Poste de pilotage",
@@ -52,6 +54,13 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+
+def default_stream_url() -> str:
+    """Flux caméra sur la même machine que celle qui sert l'interface (le Raspberry Pi)."""
+    host = st.context.headers.get("Host", "localhost")
+    host = host.rsplit(":", 1)[0] if not host.endswith("]") else host
+    return f"http://{host}:{CAMERA_STREAM_PORT}/stream.mjpg"
 
 
 def log(message: str) -> None:
@@ -281,7 +290,7 @@ with st.sidebar:
     st.subheader("Réseau")
     st.write("**Serveur :** Streamlit local")
     st.write("**Arduino :** non connecté")
-    st.write("**Caméra :** non connectée")
+    st.write(f"**Caméra :** flux MJPEG, port {CAMERA_STREAM_PORT}")
 
 st.markdown('<div class="dashboard-kicker">Station de pilotage • Prototype V2</div>', unsafe_allow_html=True)
 st.title("Tableau de bord du robot")
@@ -387,23 +396,20 @@ with nav_tab:
         st.divider()
         st.subheader("📷 Visualisation caméra")
         cam_left, cam_right = st.columns([1.5, 1])
-        with cam_left:
-            image = st.file_uploader(
-                "Image de démonstration (facultatif)",
-                type=["png", "jpg", "jpeg"], key="camera_demo_image"
-            )
-            if image:
-                st.image(image, caption="Aperçu d'une image de test", width="stretch")
-            else:
-                st.markdown(
-                    '<div class="camera-fallback"><div class="camera-icon">📷</div>'
-                    '<b>Aucun flux caméra connecté</b><p>Zone réservée à la vidéo du robot</p></div>',
-                    unsafe_allow_html=True,
-                )
         with cam_right:
-            st.write("**Source :** à configurer ultérieurement")
-            st.write("**Statut :** hors ligne")
-            st.caption("L'image chargée ici sert uniquement à tester l'affichage.")
+            stream_url = st.text_input("Adresse du flux", value=default_stream_url(), key="camera_url")
+            st.write("**Source :** camera_pi.py (programme du robot)")
+            st.caption(
+                "Flux MJPEG diffusé par le robot. Si l'image reste vide, vérifier que le "
+                "programme du robot tourne et que l'adresse est celle du Raspberry Pi."
+            )
+        with cam_left:
+            st.markdown(
+                f'<img src="{html.escape(stream_url, quote=True)}" alt="Flux caméra indisponible" '
+                'style="width:100%; image-rendering:pixelated; border-radius:13px; '
+                'background:#121d2d; border:1px solid #334155; min-height:120px;">',
+                unsafe_allow_html=True,
+            )
 
 with edit_tab:
     st.subheader("Éditer le maillage cartésien (4 × 4)")
