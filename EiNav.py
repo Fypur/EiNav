@@ -32,7 +32,7 @@ def main():
     end_pos = (2, 2)
     robot_dir = "E"
     
-    path_directions = nav.generate_path(grid, start_pos, end_pos, robot_dir)
+    path_directions = nav.generate_path(grid, start_pos, end_pos, robot_dir)[1]
     while robot.step(TIME_STEP) != -1:
         current_time = robot.getTime()
         
