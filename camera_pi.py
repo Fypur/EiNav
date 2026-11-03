@@ -50,7 +50,7 @@ class RobotCamera:
     def read(self):
         """Renvoie une image BGR (hauteur x largeur x 3), ou None si la lecture échoue."""
         if self.kind == "picamera":
-            frame = next(self._stream).array
+            frame = cv2.flip(next(self._stream).array,0)
             self._raw.truncate(0)
             return frame
         if self.kind == "picamera2":
