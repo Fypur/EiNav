@@ -45,7 +45,7 @@ class Grid:
 class Navigation:
 
     def __init__(self):
-        super().__init__() if hasattr(super(), '__init__') else None
+        pass
 
     def generate_path(self, grid, start, end, robot_direction: Direction):
         dir_vectors = {
@@ -118,7 +118,7 @@ class Navigation:
 
         if not path:
             print("Aucun chemin trouvé !")
-            return []
+            return [], {}
 
         print(f"Chemin (coordonnées) : {path}")
 
@@ -145,7 +145,7 @@ class Navigation:
                 Direction.EAST: ">",
                 Direction.WEST: "<",
             }
-            path_directions[path[0]] = dir_map.get(robot_direction, 'o')
+            path_directions[path[0]] = dir_map[robot_direction]
 
         # Affichage visuel
         print("\nAffichage du chemin (grille) :")

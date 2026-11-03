@@ -1,123 +1,113 @@
-from controller import Robot
-import cv2
-import numpy as np
-from robot_controller import RobotController
+from control import Control
+from serialpi import Serial
 from image_processor import ImageProcessor
 from navigation import Grid, Navigation
 from robot_state import RobotState
 from mode import Mode
 from direction import Direction
 
-def main():
-    TIME_STEP = 64
-    robot = Robot()
+# Simulation flag: set to True when running in Webots, False on real hardware
+SIMULATION = True
 
-    mode = Mode.HUIT
 
-    controller = RobotController(robot)
-    
-    camera = robot.getDevice("PiCam")
-    camera.enable(TIME_STEP)
-    processor = ImageProcessor(camera)
+def create_environment(simulation: bool):
+    """Initializes the appropriate hardware/simulation connection and serial link."""
+    if simulation:
+        from webots_connection import WebotsConnection
+        connection = WebotsConnection()
+        serial = Serial(robot=connection.robot)
+    else:
+        from real_robot_connection import RealRobotConnection
+        connection = RealRobotConnection()
+        serial = Serial(robot=None)
+    return connection, serial
 
-    cv2.namedWindow("Traitement d'image - 4 Etapes", cv2.WINDOW_NORMAL)
 
-    # Variables de la machine à états
-    robot_state = RobotState.FOLLOWING  
-    action_start_time = 0
-    APPROACH_DURATION = 0.9    
-    intersection_counter = 0
+def run_state_machine(connection, serial, mode: Mode = Mode.HUIT):
+    """Main state machine logic common to both real robot and simulation."""
+    APPROACH_DURATION = 0.9
+
+    controller = Control(serial)
+    processor = ImageProcessor()
 
     grid = Grid(4)
     nav = Navigation()
-    
     start_pos = (0, 0)
     end_pos = (2, 2)
     robot_dir = Direction.EAST
-    
-    path_directions = nav.generate_path(grid, start_pos, end_pos, robot_dir)[1]
-    while robot.step(TIME_STEP) != -1:
-        current_time = robot.getTime()
-        
-        # --- 1. Traitement d'image via la classe dédiée ---
-        cx, is_intersection, roi_w, debug_images = processor.process_frame()
 
-        # Affichage du statut sur l'étape 4
-        status_text = robot_state.name if robot_state != RobotState.FOLLOWING else ("INTERSECTION !" if is_intersection else "Suivi de ligne")
-        text_color = (0, 0, 255) if is_intersection or robot_state != RobotState.FOLLOWING else (0, 255, 0)
-        cv2.putText(debug_images["step4"], status_text, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+    path, path_directions_dict = nav.generate_path(grid, start_pos, end_pos, robot_dir)
+    path_directions = [path_directions_dict[coord] for coord in path[:-1]]
 
-        # --- 2. Machine à états ---
-        if robot_state == RobotState.FOLLOWING:
-            if is_intersection:
-                robot_state = RobotState.APPROACHING_INTERSECTION
-                action_start_time = current_time
-                intersection_counter += 1
-                
-                # Sauvegarde de l'image de debug
-                filename = f"intersection_debug_{intersection_counter}.jpg"
-                grid_debug = np.vstack([
-                    np.hstack([debug_images["step1"], debug_images["step2"]]), 
-                    np.hstack([debug_images["step3"], debug_images["step4"]])
-                ])
-                cv2.imwrite(filename, grid_debug)
-                print(f"Intersection détectée ! Avancée vers le centre. Image : {filename}")
+    robot_state = RobotState.FOLLOWING
+    action_start_time = 0.0
 
-            # Asservissement (Suivi de ligne)
-            if cx is not None:
-                error = cx - (roi_w / 2)
-                left_speed, right_speed = controller.apply_pid(error)
-            else:
-                left_speed = controller.speed_constant * 0.4
-                right_speed = controller.speed_constant * 0.4
-            
-            controller.set_motors_velocities(left_speed, right_speed)
+    try:
+        while connection.step():
+            current_time = connection.get_time()
+            frame = connection.get_frame()
 
-        elif robot_state == RobotState.APPROACHING_INTERSECTION:
-            controller.set_motors_velocities(controller.speed_constant * 0.8, controller.speed_constant * 0.8)
-            if current_time - action_start_time > APPROACH_DURATION:
-                if mode == Mode.HUIT:
-                    robot_state = RobotState.FOLLOWING
-                else:
-                    robot_state = RobotState.STOP_ON_INTERSECTION
+            cx, is_intersection, roi_w = processor.process_frame(frame)
+
+            if robot_state == RobotState.FOLLOWING:
+                if is_intersection:
+                    robot_state = RobotState.APPROACHING_INTERSECTION
                     action_start_time = current_time
-                    print("Arrivée au centre de l'intersection. Arrêt momentané.")
+                    print("Intersection détectée ! Avancée vers le centre.")
 
-        elif robot_state == RobotState.STOP_ON_INTERSECTION:
-            
-            next_dir = path_directions[0] if path_directions else None
-            if next_dir == '>':
-                controller.set_motors_velocities(0, 0)
-                robot_state = RobotState.TURNING_90
-            elif next_dir == '<':
-                controller.set_motors_velocities(0, 0)
-                robot_state = RobotState.TURNING_MINUS_90
-            elif next_dir == '^':
-                robot_state = RobotState.FOLLOWING
-            elif next_dir == 'v':
-                controller.set_motors_velocities(0, 0)
-                robot_state = RobotState.TURNING_180
+                if cx is not None:
+                    error = cx - (roi_w / 2)
+                    controller.aim(error)
+                else:
+                    controller.forward()
 
-                path_directions.pop(0)
-            action_start_time = current_time
+            elif robot_state == RobotState.APPROACHING_INTERSECTION:
+                controller.forward()
+                if current_time - action_start_time > APPROACH_DURATION:
+                    if mode == Mode.HUIT:
+                        robot_state = RobotState.FOLLOWING
+                    else:
+                        robot_state = RobotState.STOP_ON_INTERSECTION
+                        action_start_time = current_time
+                        print("Arrivée au centre de l'intersection. Arrêt momentané.")
 
-        elif robot_state == RobotState.TURNING_90:
-            robot_state = controller.turn_90_degrees(left=True, action_start_time=action_start_time)
+            elif robot_state == RobotState.STOP_ON_INTERSECTION:
+                controller.stop()
+                next_dir = path_directions.pop(0) if path_directions else None
+                action_start_time = current_time
 
-        elif robot_state == RobotState.TURNING_MINUS_90:
-            robot_state = controller.turn_90_degrees(left=False, action_start_time=action_start_time)
+                if next_dir == '>':
+                    robot_state = RobotState.TURNING_90
+                elif next_dir == '<':
+                    robot_state = RobotState.TURNING_MINUS_90
+                elif next_dir == '^':
+                    robot_state = RobotState.FOLLOWING
+                elif next_dir == 'v':
+                    robot_state = RobotState.TURNING_180
+                else:
+                    robot_state = RobotState.FOLLOWING
 
-        elif robot_state == RobotState.TURNING_180:
-            robot_state = controller.turn_90_degrees(left=True, action_start_time=action_start_time)
-            robot_state = controller.turn_90_degrees(left=True, action_start_time=action_start_time)
+            elif robot_state == RobotState.TURNING_90:
+                if controller.turn_90_degrees(left=True, action_start_time=action_start_time):
+                    robot_state = RobotState.FOLLOWING
 
-        # --- 3. Affichage global de débogage ---
-        top_row = np.hstack([debug_images["step1"], debug_images["step2"]])
-        bottom_row = np.hstack([debug_images["step3"], debug_images["step4"]])
-        grid_display = np.vstack([top_row, bottom_row])
-        
-        cv2.imshow("Traitement d'image - 4 Etapes", grid_display)
-        cv2.waitKey(3)
+            elif robot_state == RobotState.TURNING_MINUS_90:
+                if controller.turn_90_degrees(left=False, action_start_time=action_start_time):
+                    robot_state = RobotState.FOLLOWING
+
+            elif robot_state == RobotState.TURNING_180:
+                if controller.turn_90_degrees(left=True, action_start_time=action_start_time):
+                    robot_state = RobotState.FOLLOWING
+
+    finally:
+        controller.stop()
+        serial.disconnect()
+
+
+def main():
+    connection, serial = create_environment(SIMULATION)
+    run_state_machine(connection, serial)
+
 
 if __name__ == "__main__":
     main()

@@ -4,12 +4,9 @@ from arduino import Arduino
 class Serial:
 
     def __init__(self, robot=None) -> None:
-        self.simulation = robot is None
+        self.simulation = robot is not None
 
-        if robot is None:
-            self.arduino = Arduino('/dev/ttyACM1')
-            self.arduino.connect()
-        else:
+        if self.simulation:
             self.robot = robot
             self.motors = []
             motors_names = ["Motor2", "Motor1", "Motor4", "Motor3"]
@@ -18,18 +15,24 @@ class Serial:
                 motor.setPosition(float("inf"))
                 motor.setVelocity(0.0)
                 self.motors.append(motor)
+        else:
+            self.arduino = Arduino('/dev/ttyACM1')
+            self.arduino.connect()
 
     def disconnect(self):
-        self.arduino.disconnect()
+        if not self.simulation:
+            self.arduino.disconnect()
 
     def send_wheel_speeds(self, fl: float, fr: float, rr: float, rl: float):
-        if not self.simulation:
-            self.arduino.SendSpeeds((int)(fl * 255), (int)(fr * 255), (int)(rr * 255), (int)(rl * 255))
-        else:
+        if self.simulation:
             self.motors[0].setVelocity(fl)
             self.motors[1].setVelocity(fr)
             self.motors[2].setVelocity(rl)
             self.motors[3].setVelocity(rr)
+        else:
+            self.arduino.SendSpeeds((int)(fl * 255), (int)(fr * 255), (int)(rr * 255), (int)(rl * 255))
 
     def get_speeds_tick_per_second(self):
-        return self.arduino.GetSpeed()
+        if not self.simulation:
+            return self.arduino.GetSpeed()
+        return 0, 0, 0, 0
