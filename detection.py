@@ -1,4 +1,5 @@
 # General imports
+from robot_controller import turn_90_degrees
 import numpy as np
 import cv2
 
@@ -12,20 +13,6 @@ from controller import Camera
 
 speed_constant = 10  # Vitesse de base du robot
 
-def set_motors_velocities(left_speed, right_speed):
-    """
-    Contrôle différentiel des moteurs avec limitation (clamping) 
-    pour ne pas dépasser la vitesse maximale autorisée par Webots.
-    """
-    left_speed = np.clip(left_speed, -speed_constant, speed_constant)
-    right_speed = np.clip(right_speed, -speed_constant, speed_constant)
-
-    motors[0].setVelocity(left_speed)
-    motors[1].setVelocity(right_speed)
-    motors[2].setVelocity(left_speed)
-    motors[3].setVelocity(right_speed)
-
-
 #####################
 # Webots setup
 #####################
@@ -36,14 +23,6 @@ robot = Robot()
 # Enable camera
 camera = robot.getDevice("PiCam")
 camera.enable(TIME_STEP)
-
-# Listing the wheels
-motors = []
-motors_names = ["Motor2", "Motor1", "Motor4", "Motor3"]
-for i in range(len(motors_names)):
-    motors.append(robot.getDevice(motors_names[i]))
-    motors[i].setPosition(float("inf"))
-    motors[i].setVelocity(0.0)
 
 cv2.namedWindow("Robot - Vue Camera & Suivi", cv2.WINDOW_NORMAL)
 # cv2.namedWindow("Traitement d'image - 4 Etapes", cv2.WINDOW_NORMAL)
@@ -197,14 +176,8 @@ while robot.step(TIME_STEP) != -1:
         print("Arrêt complet. Début de la rotation de 90°.")
 
     elif robot_state == "TURNING_90":
-        turn_speed = speed_constant * 0.6
-        left_speed = turn_speed
-        right_speed = -turn_speed
-
-        if current_time - action_start_time > TURN_DURATION:
-            robot_state = "FOLLOWING"
-            print("Rotation de 90° terminée. Reprise du suivi de ligne.")
-
+        robot_state = turn_90_degrees(robot, left=True, action_start_time=action_start_time)
+        
     set_motors_velocities(left_speed, right_speed)
 
     top_row = np.hstack([step1_img, step2_img])
