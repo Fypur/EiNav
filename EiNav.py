@@ -72,25 +72,29 @@ def main():
 
         elif robot_state == "APPROACHING_INTERSECTION":
             controller.set_motors_velocities(controller.speed_constant * 0.8, controller.speed_constant * 0.8)
-            if current_time - action_start_time > APPROACH_DURATION and not mode == "HUIT":
-                robot_state = "STOP_ON_INTERSECTION"
-                action_start_time = current_time
-                print("Arrivée au centre de l'intersection. Arrêt momentané.")
-            else:
-                robot_state = "FOLLOWING"
+            if current_time - action_start_time > APPROACH_DURATION:
+                if mode == "HUIT":
+                    robot_state = "FOLLOWING"
+                else:
+                    robot_state = "STOP_ON_INTERSECTION"
+                    action_start_time = current_time
+                    print("Arrivée au centre de l'intersection. Arrêt momentané.")
 
         elif robot_state == "STOP_ON_INTERSECTION":
             
-            controller.set_motors_velocities(0, 0)
             next_dir = path_directions[0] if path_directions else None
             if next_dir == '>':
+                controller.set_motors_velocities(0, 0)
                 robot_state = "TURNING_90"
             elif next_dir == '<':
+                controller.set_motors_velocities(0, 0)
                 robot_state = "TURNING_-90"
             elif next_dir == '^':
                 robot_state = "FOLLOWING"
             elif next_dir == 'v':
+                controller.set_motors_velocities(0, 0)
                 robot_state = "TURNING_180"
+
                 path_directions.pop(0)
             action_start_time = current_time
 
