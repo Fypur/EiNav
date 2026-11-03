@@ -16,7 +16,7 @@ class Serial:
                 motor.setVelocity(0.0)
                 self.motors.append(motor)
         else:
-            self.arduino = Arduino('/dev/ttyACM1')
+            self.arduino = Arduino('/dev/ttyACM0')
             self.arduino.connect()
 
     def disconnect(self):

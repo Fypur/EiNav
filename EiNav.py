@@ -9,7 +9,7 @@ from direction import Direction
 
 
 # Simulation flag
-SIMULATION = True
+SIMULATION = False
 
 
 def create_environment(simulation: bool):
