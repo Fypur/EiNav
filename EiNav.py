@@ -8,6 +8,8 @@ def main():
     TIME_STEP = 64
     robot = Robot()
 
+    mode = "HUIT"
+
     controller = RobotController(robot)
     
     camera = robot.getDevice("PiCam")
@@ -61,10 +63,12 @@ def main():
 
         elif robot_state == "APPROACHING_INTERSECTION":
             controller.set_motors_velocities(controller.speed_constant * 0.8, controller.speed_constant * 0.8)
-            if current_time - action_start_time > APPROACH_DURATION:
+            if current_time - action_start_time > APPROACH_DURATION and not mode == "HUIT":
                 robot_state = "STOP_ON_INTERSECTION"
                 action_start_time = current_time
                 print("Arrivée au centre de l'intersection. Arrêt momentané.")
+            else:
+                robot_state = "FOLLOWING"
 
         elif robot_state == "STOP_ON_INTERSECTION":
             controller.set_motors_velocities(0, 0)
@@ -73,6 +77,13 @@ def main():
             print("Arrêt complet. Début de la rotation de 90°.")
 
         elif robot_state == "TURNING_90":
+            robot_state = controller.turn_90_degrees(left=True, action_start_time=action_start_time)
+
+        elif robot_state == "TURNING_-90":
+            robot_state = controller.turn_90_degrees(left=False, action_start_time=action_start_time)
+
+        elif robot_state == "TURNING_180":
+            robot_state = controller.turn_90_degrees(left=True, action_start_time=action_start_time)
             robot_state = controller.turn_90_degrees(left=True, action_start_time=action_start_time)
 
         # --- 3. Affichage global de débogage ---
