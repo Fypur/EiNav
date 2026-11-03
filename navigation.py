@@ -165,7 +165,7 @@ class Navigation:
                     row_str += " . "
             print(row_str)
 
-        return path
+        return path, path_directions
 
 if __name__ == '__main__':
     grid = Grid(4)

@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from robot_controller import RobotController
 from image_processor import ImageProcessor
+from
 
 def main():
     TIME_STEP = 64
@@ -24,6 +25,14 @@ def main():
     APPROACH_DURATION = 0.9    
     intersection_counter = 0
 
+    grid = Grid(4)
+    nav = Navigation()
+    
+    start_pos = (0, 0)
+    end_pos = (2, 2)
+    robot_dir = "E"
+    
+    path_directions = nav.generate_path(grid, start_pos, end_pos, robot_dir)
     while robot.step(TIME_STEP) != -1:
         current_time = robot.getTime()
         
@@ -71,6 +80,9 @@ def main():
                 robot_state = "FOLLOWING"
 
         elif robot_state == "STOP_ON_INTERSECTION":
+            path_directions.pop(0)
+            # si je dois touner alord stop et tourner
+            # sinon conitnuer tout droit
             controller.set_motors_velocities(0, 0)
             robot_state = "TURNING_90"
             action_start_time = current_time
