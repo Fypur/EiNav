@@ -23,7 +23,7 @@ def create_environment(simulation: bool):
     return connection, serial
 
 
-def run_state_machine(connection, serial, mode: Mode = Mode.HUIT):
+def run_state_machine(connection, serial, mode: Mode = Mode.GRID):
     """Main state machine logic common to both real robot and simulation."""
     APPROACH_DURATION = 0.9
 
@@ -32,8 +32,8 @@ def run_state_machine(connection, serial, mode: Mode = Mode.HUIT):
 
     grid = Grid(4)
     nav = Navigation()
-    start_pos = (0, 0)
-    end_pos = (2, 2)
+    start_pos = (0, 1)
+    end_pos = (3, 3)
     robot_dir = Direction.EAST
 
     path, path_directions_dict = nav.generate_path(grid, start_pos, end_pos, robot_dir)
@@ -56,7 +56,7 @@ def run_state_machine(connection, serial, mode: Mode = Mode.HUIT):
                     print("Intersection détectée ! Avancée vers le centre.")
 
                 if cx is not None:
-                    error = cx - (roi_w / 2)
+                    error = (cx - (roi_w / 2))/(roi_w / 2)
                     controller.aim(error)
                 else:
                     controller.forward()
@@ -73,19 +73,23 @@ def run_state_machine(connection, serial, mode: Mode = Mode.HUIT):
 
             elif robot_state == RobotState.STOP_ON_INTERSECTION:
                 controller.stop()
-                next_dir = path_directions.pop(0) if path_directions else None
-                action_start_time = current_time
-
-                if next_dir == '>':
-                    robot_state = RobotState.TURNING_90
-                elif next_dir == '<':
-                    robot_state = RobotState.TURNING_MINUS_90
-                elif next_dir == '^':
-                    robot_state = RobotState.FOLLOWING
-                elif next_dir == 'v':
-                    robot_state = RobotState.TURNING_180
+                if len(path_directions) == 1:
+                    print("Arret du robot")
+                    robot_state = RobotState.STOPPED
                 else:
-                    robot_state = RobotState.FOLLOWING
+                    next_dir = path_directions.pop(0) if path_directions else None
+                    action_start_time = current_time
+
+                    if next_dir == '>':
+                        robot_state = RobotState.TURNING_90
+                    elif next_dir == '<':
+                        robot_state = RobotState.TURNING_MINUS_90
+                    elif next_dir == '^':
+                        robot_state = RobotState.FOLLOWING
+                    elif next_dir == 'v':
+                        robot_state = RobotState.TURNING_180
+                    else:
+                        robot_state = RobotState.FOLLOWING
 
             elif robot_state == RobotState.TURNING_90:
                 if controller.turn_90_degrees(left=True, action_start_time=action_start_time):

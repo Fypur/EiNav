@@ -8,3 +8,4 @@ class RobotState(Enum):
     TURNING_90 = auto()
     TURNING_MINUS_90 = auto()
     TURNING_180 = auto()
+    STOPPED = auto()

@@ -25,10 +25,10 @@ class Serial:
 
     def send_wheel_speeds(self, fl: float, fr: float, rr: float, rl: float):
         if self.simulation:
-            self.motors[0].setVelocity(fl)
-            self.motors[1].setVelocity(fr)
-            self.motors[2].setVelocity(rl)
-            self.motors[3].setVelocity(rr)
+            self.motors[0].setVelocity(fl*10)
+            self.motors[1].setVelocity(fr*10)
+            self.motors[2].setVelocity(rl*10)
+            self.motors[3].setVelocity(rr*10)
         else:
             self.arduino.SendSpeeds((int)(fl * 255), (int)(fr * 255), (int)(rr * 255), (int)(rl * 255))
 

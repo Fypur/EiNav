@@ -6,9 +6,8 @@ class Control:
 
     def __init__(self, serial: Serial) -> None:
         self.serial = serial
-        self.kp = 60
-
-        self.turn_duration = 0.5
+        self.kp = 0.3
+        self.turn_duration = 1.0  # Duration of a 90-degree turn in seconds
         self.turn_speed = 0.8
 
     def stop(self):
@@ -21,7 +20,7 @@ class Control:
 
     def aim(self, error: float):
         correction = error * self.kp
-        base_speed = 0.5 if not self.serial.simulation else 8.0
+        base_speed = 0.6
         left_speed = base_speed + correction
         right_speed = base_speed - correction
 
