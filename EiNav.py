@@ -8,7 +8,6 @@ def main():
     TIME_STEP = 64
     robot = Robot()
 
-    # Initialisation des composants POO
     controller = RobotController(robot)
     
     camera = robot.getDevice("PiCam")
