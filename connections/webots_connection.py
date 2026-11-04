@@ -1,12 +1,17 @@
-from controller import Robot
+from __future__ import annotations
+
 import cv2
 import numpy as np
+from controller import Robot
+
+from connections import utils
+from connections.base import RobotConnection
 
 
-class WebotsConnection:
+class WebotsConnection(RobotConnection):
     """Manages the connection to Webots: stepping through time, giving time, and capturing camera frames."""
 
-    def __init__(self, time_step: int = 64, camera_name: str = "PiCam"):
+    def __init__(self, time_step: int = utils.TIME_STEP_MS, camera_name: str = utils.WEBOTS_CAMERA_NAME) -> None:
         self.time_step = time_step
         self.robot = Robot()
         self.camera = self.robot.getDevice(camera_name)

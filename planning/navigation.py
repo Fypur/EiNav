@@ -1,12 +1,18 @@
+from __future__ import annotations
 
 from collections import deque
-from direction import Direction
+from typing import Deque, List, Optional, Tuple
+
+from planning.direction import Direction
+from planning.utils import GRID_SIZE
+
+Position = Tuple[int, int]  # (x, y), y croissant vers le sud
 
 
 class IntersectionPoint:
 
-    def __init__(self, x, y, left=True, right=True,
-                 top=True, bottom=True):
+    def __init__(self, x: int, y: int, left: bool = True, right: bool = True,
+                 top: bool = True, bottom: bool = True) -> None:
         self.x = x
         self.y = y
         self.left = left
@@ -14,13 +20,13 @@ class IntersectionPoint:
         self.top = top
         self.bottom = bottom
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"IntersectionPoint({self.x}, {self.y})"
 
 
 class Grid:
 
-    def __init__(self, size=4):
+    def __init__(self, size: int = GRID_SIZE) -> None:
         # size représente le nombre de cases
         # size + 1 représente le nombre d'intersections
         self.size = size
@@ -44,10 +50,16 @@ class Grid:
 
 class Navigation:
 
-    def __init__(self):
+    def __init__(self) -> None:
         pass
 
-    def generate_path(self, grid, start, end, robot_direction):
+    def generate_path(
+        self,
+        grid: Grid,
+        start: Position,
+        end: Position,
+        robot_direction: Direction,
+    ) -> List[Position]:
         nb_nodes = grid.nb_nodes
         max_idx = nb_nodes - 1
 
@@ -60,11 +72,13 @@ class Navigation:
                 print(f"{name} {(x, y)} hors de la grille")
                 return []
 
-        def get_neighbors(x, y, current_dir):
+        def get_neighbors(
+            x: int, y: int, current_dir: Direction
+        ) -> List[Tuple[Direction, Position]]:
 
             point = grid.grid[y][x]
 
-            candidates = []
+            candidates: List[Tuple[Direction, Position]] = []
 
             if point.top and y > 0:
                 candidates.append(
@@ -88,7 +102,7 @@ class Navigation:
 
             # Priorité à la continuité de déplacement
             # puis à la proximité de la destination
-            def sort_key(item):
+            def sort_key(item: Tuple[Direction, Position]) -> Tuple[int, int]:
                 direction, (nx, ny) = item
 
                 straight_penalty = (
@@ -107,7 +121,7 @@ class Navigation:
             return candidates
 
         # BFS
-        queue = deque()
+        queue: Deque[Tuple[Position, List[Position], Direction]] = deque()
         queue.append((start, [start], robot_direction))
 
         visited = {start}
@@ -144,9 +158,9 @@ class Navigation:
 
         return []
 
-    def path_to_directions(self, path):
+    def path_to_directions(self, path: List[Position]) -> List[Direction]:
 
-        directions = []
+        directions: List[Direction] = []
 
         for i in range(len(path) - 1):
 
@@ -167,7 +181,7 @@ class Navigation:
 
         return directions
 
-    def display_path(self, grid, path):
+    def display_path(self, grid: Grid, path: List[Position]) -> None:
 
         if not path:
             print("Aucun chemin à afficher.")
@@ -209,9 +223,52 @@ class Navigation:
             print(row)
 
 
+class Mission:
+    """Aller-retour sur un chemin : à destination, demi-tour et retour par le même chemin.
+
+    `on_intersection` est appelé à chaque arrêt sur une intersection. Le robot démarre posé sur
+    le premier nœud : le premier appel a donc lieu au lancement, sans attendre la vision.
+    """
+
+    def __init__(self, path: List[Position], heading: Optional[Direction] = None) -> None:
+        if not path:
+            raise ValueError("Une mission nécessite un chemin non vide.")
+        self.start = path[0]
+        self.destination = path[-1]
+        self.route = list(path)
+        self.heading = heading  # orientation courante du robot
+        self.position: Position = path[0]  # dernier nœud atteint
+        self.destination_reached = False  # levé à l'arrivée à destination
+        self.returned_home = False  # levé au retour sur le point de départ
+        self._index = 0
+
+    @property
+    def next_node(self) -> Optional[Position]:
+        """Nœud vers lequel le robot se dirige (None si la mission est finie)."""
+        return None if self.returned_home else self.route[self._index]
+
+    def on_intersection(self) -> Optional[Direction]:
+        """Enregistre l'arrivée sur le nœud visé et renvoie la direction à prendre (None : fini)."""
+        self.position = self.route[self._index]
+
+        if self._index == len(self.route) - 1 and not self.destination_reached:
+            self.destination_reached = True
+            # Chemin inversé : la première direction est l'opposée de celle d'arrivée,
+            # donc un demi-tour.
+            self.route.reverse()
+            self._index = 0
+
+        if self._index == len(self.route) - 1:
+            self.returned_home = True
+            return None
+
+        self._index += 1
+        return Navigation().path_to_directions(self.route[self._index - 1:self._index + 1])[0]
+
+
 if __name__ == "__main__":
 
-    grid = Grid(4)
+    grid = Grid()
     nav = Navigation()
 
     start_pos = (0, 1)

@@ -1,9 +1,10 @@
-# Robot Control — Interface Streamlit V2 (simulation)
+# Robot Control — Interface Streamlit V2
 
-Une interface web **uniquement en Python / Streamlit**, utilisable depuis le navigateur d'un téléphone connecté au même Wi-Fi que le Raspberry Pi. **Aucun Arduino ni capteur n'est connecté à ce stade**.
+Une interface web servie par le Raspberry Pi, utilisable depuis le navigateur de tout appareil sur le même réseau. L'onglet **Robot** commande le robot réel et l'affiche en direct ; les autres onglets sont une **simulation** et n'envoient aucune commande au robot.
 
 ## Fonctionnalités
 
+- **Robot** : choix entre la livraison sur la grille et le suivi de ligne sur le parcours en 8, boutons Démarrer et Arrêter, état, image traitée. En livraison : choix du départ, de l'arrivée et de l'orientation, position sur la grille, flags « destination atteinte » et « retour au départ ». Cette page (`live.html`) est servie par le programme du robot ;
 - **Maillage cartésien de 16 points (grille 4 × 4)**, identifiants A–P, avec axes X/Y, coordonnées initiales de 0 à 3, départ M = (0, 0) ;
 - choix de destination en cliquant un point ou depuis une liste ; chemin le plus court calculé et visualisé en bleu (NetworkX) ;
 - commandes **Préparer le trajet**, **Retour au départ**, **Avancer d'un point** et **STOP** : simulation uniquement ;
@@ -11,40 +12,65 @@ Une interface web **uniquement en Python / Streamlit**, utilisable depuis le nav
 - éditeur de la ligne blanche (courbe lisse Catmull-Rom ou segments droits), longueur totale, curseur de progression et avance virtuelle de 5 % ;
 - édition des coordonnées des 16 nœuds et de leurs arêtes ; sauvegarde dans `carte.json` ;
 - édition et sauvegarde de la ligne dans `ligne_blanche.json` ;
-- panneau caméra optionnel : flux vidéo réel du robot, diffusé par `camera_pi.py` (MJPEG, `http://IP_DU_PI:8000/stream.mjpg`) quand le programme du robot tourne ; journal des interactions.
+- panneau caméra optionnel : flux vidéo réel du robot, diffusé par `vision/camera_pi.py` (MJPEG, `http://IP_DU_PI:8000/stream.mjpg`) quand le programme du robot tourne ; journal des interactions.
 
 ## Installation et lancement
 
 Python 3.10+ recommandé :
 
-```bash
-cd robot_streamlit
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run app.py --server.address 0.0.0.0 --server.port 8501
-```
-
-Sous Windows, remplacer `source .venv/bin/activate` par `.venv\Scripts\activate`.
-
-Sur le Raspberry Pi connecté au partage de connexion de ton téléphone :
+Sur le Raspberry Pi, depuis la racine du dépôt :
 
 ```bash
-hostname -I
+pip install -r frontend/requirements.txt
+python EiNav.py
 ```
 
-Puis depuis le navigateur du téléphone, ouvrir `http://ADRESSE_IP_DU_PI:8501` (avec l'adresse **réellement attribuée**). Le point d'accès mobile doit permettre la communication locale entre les appareils.
+`EiNav.py` lance l'interface et affiche son adresse dans le terminal. Sur une machine avec écran, elle s'ouvre aussi dans le navigateur. **Le robot reste immobile** jusqu'au clic sur **Démarrer**.
+
+Pour faire une livraison :
+
+1. choisir le départ, l'arrivée et l'orientation ;
+2. poser le robot sur le croisement de départ, dans l'orientation choisie (la caméra ne voit pas ce croisement : le robot s'y considère déjà arrivé) ;
+3. cliquer sur **Démarrer**. Le robot va à l'arrivée, fait demi-tour, revient au départ et attend l'ordre suivant.
+
+Pour suivre le parcours en 8 :
+
+1. choisir **Suivi de ligne en 8** ;
+2. poser le robot sur la ligne ;
+3. cliquer sur **Démarrer**. Le robot suit la ligne et traverse le croisement tout droit, sans s'arrêter, jusqu'au clic sur **Arrêter**.
+
+Depuis un navigateur sur le même réseau :
+
+| Adresse | Contenu |
+| --- | --- |
+| `http://IP_DU_PI:8501` | Interface Streamlit complète |
+| `http://IP_DU_PI:8001` | Commande du robot (livraison ou parcours en 8) et image traitée, sans Streamlit |
+| `http://IP_DU_PI:8000` | Image traitée seule |
+
+La page du port 8001 ne dépend que de Python : elle fonctionne même si Streamlit n'est pas installé. Le point d'accès mobile doit permettre la communication locale entre les appareils.
+
+Pour travailler sur l'interface sans robot : `cd frontend && streamlit run app.py` (l'onglet du robot affiche alors « Robot hors ligne »).
 
 ## Structure
 
 | Fichier | Usage |
 | --- | --- |
 | `app.py` | Interface Streamlit et visualisations Plotly |
+| `live.html` | Commande du robot (livraison ou parcours en 8) et image traitée, servie par `robot/telemetry.py` |
 | `navigation.py` | Validation du maillage et recherche de chemin |
 | `carte.json` | Grille de 16 points et 24 arêtes par défaut |
 | `ligne.py` | Validation, interpolation et positionnement sur une ligne courbe |
 | `ligne_blanche.json` | Points X/Y du tracé blanc et paramètre de lissage |
+| `utils.py` | Constantes de l'interface |
 | `requirements.txt` | Bibliothèques nécessaires |
+
+## Réglages du robot
+
+Les valeurs par défaut sont dans le fichier `utils.py` de chaque dossier (`robot/`, `vision/`, `planning/`, `connections/`, `frontend/`).
+
+Les plus utiles se changent dans le panneau **Réglages** de l'onglet **Robot** : vitesses, kp, durée d'approche, virages, seuil de blanc. Un changement s'applique aussitôt, même en mission, et il est conservé dans `settings.json`, sur le Pi et hors de git.
+
+Une valeur modifiée depuis l'interface prend le pas sur `utils.py`. Le bouton ↺ à côté d'un réglage le remet à la valeur de `utils.py`. Pour ajouter un réglage, compléter la liste `SETTINGS` de `robot/tuning.py`.
 
 ## Comprendre les deux modes
 
@@ -56,6 +82,6 @@ Par défaut, tous les 16 nœuds sont présents ; l'éditeur permet de changer le
 
 ## Précautions
 
-- STOP est **visuel uniquement**, pas un arrêt d'urgence matériel.
-- Aucun appel série, moteur, caméra réelle, ni automatisme physique.
-- L'application ne comporte pas d'authentification : ne pas exposer le port à Internet et préférer un réseau local fiable.
+- **Arrêter** coupe les moteurs au tour de boucle suivant, à condition que le réseau fonctionne : ce n'est pas un arrêt d'urgence matériel. `Ctrl+C` sur le Pi arrête aussi le robot.
+- Le bouton STOP de l'onglet simulation est **visuel uniquement** : il n'arrête pas le robot réel.
+- L'application ne comporte pas d'authentification : **toute personne sur le réseau peut faire démarrer le robot**. Ne pas exposer les ports à Internet et préférer un réseau local fiable.

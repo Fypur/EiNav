@@ -1,6 +1,7 @@
-"""Tableau de bord Streamlit — maillage cartésien de 16 points + ligne courbe.
+"""Tableau de bord Streamlit.
 
-Simulation graphique uniquement : aucune communication avec Arduino ni caméra réelle.
+L'onglet « Robot » commande le robot réel (livraison ou parcours en 8) et l'affiche en direct.
+Les autres onglets sont une simulation graphique : ils n'envoient aucune commande au robot.
 """
 
 from __future__ import annotations
@@ -8,7 +9,6 @@ from __future__ import annotations
 import html
 import json
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -16,14 +16,15 @@ import streamlit as st
 
 from ligne import line_length, position_at, read_line, sample_line, save_line, validate_line
 from navigation import path_distance, read_map, save_map, shortest_path, validate_map
-
-
-BASE_DIR = Path(__file__).resolve().parent
-MAP_FILE = BASE_DIR / "carte.json"
-LINE_FILE = BASE_DIR / "ligne_blanche.json"
-MODE_NAV = "Navigation sur le maillage"
-MODE_LINE = "Suivi de ligne blanche"
-CAMERA_STREAM_PORT = 8000  # doit correspondre à STREAM_PORT dans camera_pi.py
+from utils import (
+    CAMERA_STREAM_PORT,
+    LINE_FILE,
+    LIVE_PAGE_HEIGHT,
+    MAP_FILE,
+    MODE_LINE,
+    MODE_NAV,
+    TELEMETRY_PORT,
+)
 
 st.set_page_config(
     page_title="Robot | Poste de pilotage",
@@ -63,11 +64,14 @@ st.markdown(
 )
 
 
-def default_stream_url() -> str:
-    """Flux caméra sur la même machine que celle qui sert l'interface (le Raspberry Pi)."""
+def robot_host() -> str:
+    """Machine qui sert l'interface (le Raspberry Pi), telle que le navigateur la connaît."""
     host = st.context.headers.get("Host", "localhost")
-    host = host.rsplit(":", 1)[0] if not host.endswith("]") else host
-    return f"http://{host}:{CAMERA_STREAM_PORT}/stream.mjpg"
+    return host.rsplit(":", 1)[0] if not host.endswith("]") else host
+
+
+def default_stream_url() -> str:
+    return f"http://{robot_host()}:{CAMERA_STREAM_PORT}/stream.mjpg"
 
 
 def log(message: str) -> None:
@@ -298,11 +302,11 @@ with st.sidebar:
             "Flux MJPEG diffusé par camera_pi.py. Si l'image reste vide, vérifier que le "
             "programme du robot tourne et que l'adresse est celle du Raspberry Pi."
         )
-    st.caption("Tout est simulé : aucun moteur ni capteur n'est raccordé.")
+    st.caption("Seul l'onglet « Robot » agit sur le robot réel : ce choix de mode ne concerne que la simulation.")
     st.divider()
     st.subheader("Réseau")
-    st.write("**Serveur :** Streamlit local")
-    st.write("**Arduino :** non connecté")
+    st.write(f"**Robot :** {robot_host()}")
+    st.write(f"**Grille en direct :** port {TELEMETRY_PORT}")
     st.write(f"**Caméra :** flux MJPEG, port {CAMERA_STREAM_PORT}")
 
 if show_camera:
@@ -324,9 +328,20 @@ st.markdown(
     '<div class="dashboard-note">Maillage cartésien 4 × 4 et suivi de ligne blanche courbe</div>',
     unsafe_allow_html=True,
 )
-st.info("🧪 SIMULATION — aucune commande n’est envoyée au robot réel.")
 
-m1, m2, m3, m4 = st.columns(4)
+live_tab, nav_tab, edit_tab, line_tab, log_tab = st.tabs([
+    "🤖 Robot", "🗺️ Pilotage (simulation)", "🧩 Édition du maillage",
+    "〰️ Édition de la ligne", "📋 Journal",
+])
+
+with live_tab:
+    # Page servie par le programme du robot : elle reste à jour sans relancer Streamlit.
+    st.iframe(f"http://{robot_host()}:{TELEMETRY_PORT}/", height=LIVE_PAGE_HEIGHT)
+    st.caption("Si la page reste vide, vérifier que le programme du robot (EiNav.py) tourne.")
+
+with nav_tab:
+    st.info("🧪 SIMULATION — aucune commande n’est envoyée au robot réel.")
+    m1, m2, m3, m4 = st.columns(4)
 if mode == MODE_NAV:
     coords = {n["id"]: (n["x"], n["y"]) for n in data["nodes"]}
     px, py = coords[st.session_state.position]
@@ -341,10 +356,6 @@ else:
     m2.metric("Progression", f"{st.session_state.line_progress} %")
     m3.metric("Longueur de ligne", f"{line_length(samples):.2f} u")
     m4.metric("Mode", "Ligne blanche")
-
-nav_tab, edit_tab, line_tab, log_tab = st.tabs([
-    "🗺️ Pilotage", "🧩 Édition du maillage", "〰️ Édition de la ligne", "📋 Journal"
-])
 
 with nav_tab:
     left, right = st.columns([1.8, 1], gap="large")
