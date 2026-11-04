@@ -7,6 +7,8 @@ from planning.direction import Direction
 
 Position = Tuple[int, int]  # (x, y), y croissant vers le sud
 
+GRID_SIZE = 4  # nombre de cases par côté de la grille
+
 
 class IntersectionPoint:
 
@@ -229,12 +231,13 @@ class Mission:
     le premier nœud : le premier arrêt a donc lieu sur le point de départ.
     """
 
-    def __init__(self, path: List[Position]) -> None:
+    def __init__(self, path: List[Position], heading: Optional[Direction] = None) -> None:
         if not path:
             raise ValueError("Une mission nécessite un chemin non vide.")
         self.start = path[0]
         self.destination = path[-1]
         self.route = list(path)
+        self.heading = heading  # orientation courante du robot
         self.position: Optional[Position] = None  # dernier nœud atteint
         self.destination_reached = False  # levé à l'arrivée à destination
         self.returned_home = False  # levé au retour sur le point de départ

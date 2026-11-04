@@ -1,6 +1,6 @@
 """Tableau de bord Streamlit.
 
-L'onglet « Robot en direct » affiche le robot réel (grille et image traitée).
+L'onglet « Robot » commande le robot réel (mode livraison) et l'affiche en direct.
 Les autres onglets sont une simulation graphique : ils n'envoient aucune commande au robot.
 """
 
@@ -303,7 +303,7 @@ with st.sidebar:
             "Flux MJPEG diffusé par camera_pi.py. Si l'image reste vide, vérifier que le "
             "programme du robot tourne et que l'adresse est celle du Raspberry Pi."
         )
-    st.caption("Seul l'onglet « Robot en direct » reflète le robot réel.")
+    st.caption("Seul l'onglet « Robot — Livraison » agit sur le robot réel.")
     st.divider()
     st.subheader("Réseau")
     st.write(f"**Robot :** {robot_host()}")
@@ -331,13 +331,13 @@ st.markdown(
 )
 
 live_tab, nav_tab, edit_tab, line_tab, log_tab = st.tabs([
-    "📡 Robot en direct", "🗺️ Pilotage (simulation)", "🧩 Édition du maillage",
+    "🚚 Robot — Livraison", "🗺️ Pilotage (simulation)", "🧩 Édition du maillage",
     "〰️ Édition de la ligne", "📋 Journal",
 ])
 
 with live_tab:
     # Page servie par le programme du robot : elle reste à jour sans relancer Streamlit.
-    st.iframe(f"http://{robot_host()}:{TELEMETRY_PORT}/", height=760)
+    st.iframe(f"http://{robot_host()}:{TELEMETRY_PORT}/", height=1000)
     st.caption("Si la page reste vide, vérifier que le programme du robot (EiNav.py) tourne.")
 
 with nav_tab:

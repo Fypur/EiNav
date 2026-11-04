@@ -8,6 +8,7 @@ class Mode(Enum):
 
 
 class RobotState(Enum):
+    IDLE = auto()  # moteurs coupés, en attente d'un ordre de l'interface
     FOLLOWING = auto()
     APPROACHING_INTERSECTION = auto()
     STOP_ON_INTERSECTION = auto()

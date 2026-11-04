@@ -20,6 +20,17 @@
   .chip.on { color:#06281E; background:var(--robot); border-color:var(--robot); font-weight:600; }
   .chip.off { color:#fff; background:var(--off); border-color:var(--off); font-weight:600; }
   .legend { margin:8px 0 0; color:var(--muted); font-size:.85rem; }
+  #delivery { grid-column:1 / -1; }
+  #form { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:flex-end; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:.85rem; color:var(--muted); }
+  select, button { font:inherit; min-height:40px; border-radius:8px; border:1px solid var(--line);
+                   background:var(--bg); color:var(--text); padding:6px 10px; }
+  button { font-weight:600; padding:6px 18px; cursor:pointer; }
+  button:disabled, select:disabled { opacity:.45; cursor:not-allowed; }
+  #go:not(:disabled) { background:var(--robot); border-color:var(--robot); color:#06281E; }
+  #halt:not(:disabled) { background:var(--off); border-color:var(--off); color:#fff; }
+  #error { margin:8px 0 0; color:#FCA5A5; min-height:1.4em; }
+  svg.picking { cursor:pointer; }
 </style>
 </head>
 <body>
@@ -32,10 +43,31 @@
   <span class="chip" id="home">Retour au départ</span>
 </div>
 <main>
+  <section id="delivery">
+    <h2>Mode livraison</h2>
+    <div id="form">
+      <label for="start">Point de départ<select id="start"></select></label>
+      <label for="destination">Point d'arrivée<select id="destination"></select></label>
+      <label for="heading">Orientation au départ
+        <select id="heading">
+          <option value="SOUTH">Sud (vers le bas)</option>
+          <option value="NORTH">Nord (vers le haut)</option>
+          <option value="EAST">Est (vers la droite)</option>
+          <option value="WEST">Ouest (vers la gauche)</option>
+        </select>
+      </label>
+      <button id="go" type="button" disabled>Démarrer</button>
+      <button id="halt" type="button" disabled>Arrêter</button>
+    </div>
+    <p class="legend">Touche la grille pour choisir le départ, puis l'arrivée. Pose le robot sur la ligne,
+      juste avant le point de départ, dans l'orientation choisie : il démarre dès le clic.</p>
+    <p id="error" role="alert"></p>
+  </section>
   <section>
     <h2>Position sur la grille</h2>
     <svg id="grid" role="img" aria-label="Position du robot sur la grille"></svg>
-    <p class="legend">Dernière intersection atteinte. Le trait bleu est l'étape en cours.</p>
+    <p class="legend">D : départ. A : arrivée. La flèche est sur la dernière intersection atteinte,
+      le trait bleu est l'étape en cours.</p>
   </section>
   <section>
     <h2>Image traitée</h2>
@@ -52,7 +84,13 @@
     FOLLOWING: "Suivi de ligne", APPROACHING_INTERSECTION: "Approche d'intersection",
     STOP_ON_INTERSECTION: "Arrêt sur intersection", TURNING_90: "Rotation à gauche",
     TURNING_MINUS_90: "Rotation à droite", TURNING_180: "Demi-tour", STOPPED: "Arrêté",
+    IDLE: "En attente de démarrage",
   };
+  const $ = (id) => document.getElementById(id);
+  let latest = null;        // dernier état reçu du robot
+  let nextPick = "start";   // champ rempli par le prochain clic sur la grille
+  let sending = false;
+  let drawn = "";
 
   // Un flux MJPEG ne finit jamais de charger : on l'ouvre après le chargement de la page,
   // sinon l'onglet (et l'iframe de Streamlit) resterait « en cours de chargement ».
@@ -73,7 +111,16 @@
   const polyline = (nodes) => nodes.map(([x, y]) => `${px(x)},${px(y)}`).join(" ");
 
   function drawGrid(status) {
+    const running = status.state !== "IDLE";
+    // À l'arrêt, la grille montre le choix en cours ; pendant une mission, celle du robot.
+    const start = running ? status.start : parseNode($("start").value);
+    const destination = running ? status.destination : parseNode($("destination").value);
+    const signature = JSON.stringify([status.state, status.route, status.position, status.heading, start, destination]);
+    if (signature === drawn) return;
+    drawn = signature;
+
     svg.replaceChildren();
+    svg.classList.toggle("picking", !running);
     const n = status.grid_nodes;
     const size = 2 * MARGIN + (n - 1) * STEP;
     svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
@@ -82,8 +129,10 @@
       el("line", { x1: px(0), y1: px(i), x2: px(n - 1), y2: px(i), stroke: "#33465F", "stroke-width": 3 });
       el("line", { x1: px(i), y1: px(0), x2: px(i), y2: px(n - 1), stroke: "#33465F", "stroke-width": 3 });
     }
-    el("polyline", { points: polyline(status.route), fill: "none", stroke: "#38BDF8",
-                     "stroke-width": 6, "stroke-linejoin": "round", "stroke-linecap": "round" });
+    if (running) {
+      el("polyline", { points: polyline(status.route), fill: "none", stroke: "#38BDF8",
+                       "stroke-width": 6, "stroke-linejoin": "round", "stroke-linecap": "round" });
+    }
     for (let y = 0; y < n; y++) {
       for (let x = 0; x < n; x++) el("circle", { cx: px(x), cy: px(y), r: 5, fill: "#687D99" });
     }
@@ -94,17 +143,92 @@
                                 "font-weight": 700, fill: "#101B2D" });
       text.textContent = label;
     };
-    marker(status.start, "#CBD5E1", "D");
-    marker(status.destination, "#F59E0B", "A");
+    if (start) marker(start, "#CBD5E1", "D");
+    if (destination) marker(destination, "#F59E0B", "A");
 
     // Avant le premier arrêt, le robot n'a pas encore atteint le point de départ.
-    const [rx, ry] = status.position || status.start;
+    const robot = status.position || (running ? status.start : null);
+    if (!robot) return;
+    const [rx, ry] = robot;
     el("polygon", {
       points: "0,-20 14,14 0,6 -14,14", fill: "#10B981", stroke: "#D1FAE5", "stroke-width": 2,
       opacity: status.position ? 1 : 0.55,
       transform: `translate(${px(rx)} ${px(ry)}) rotate(${ANGLE[status.heading] || 0})`,
     });
   }
+
+  const parseNode = (value) => (value ? value.split(",").map(Number) : null);
+
+  function fillNodes(n) {
+    if ($("start").options.length) return;
+    for (const id of ["start", "destination"]) {
+      $(id).add(new Option("Choisir…", ""));
+      for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) $(id).add(new Option(`(${x}, ${y})`, `${x},${y}`));
+      }
+    }
+  }
+
+  function refreshControls() {
+    const online = latest !== null;
+    const running = online && latest.state !== "IDLE";
+    for (const id of ["start", "destination", "heading"]) $(id).disabled = !online || running;
+    const chosen = $("start").value && $("destination").value;
+    const same = chosen && $("start").value === $("destination").value;
+    $("go").disabled = !online || running || sending || !chosen || same;
+    $("halt").disabled = !running;
+    if (!sending && same) $("error").textContent = "Le départ et l'arrivée doivent être différents.";
+    else if (!sending && $("error").dataset.same) $("error").textContent = "";
+    $("error").dataset.same = same ? "1" : "";
+    if (online) drawGrid(latest);
+  }
+
+  async function post(path, payload) {
+    const response = await fetch(path, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || `Erreur ${response.status}`);
+    }
+  }
+
+  async function command(path, payload) {
+    sending = true;
+    $("error").textContent = "";
+    refreshControls();
+    try {
+      await post(path, payload);
+    } catch (error) {
+      $("error").textContent = error.message === "Failed to fetch" ? "Robot injoignable." : error.message;
+    }
+    sending = false;
+    refreshControls();
+  }
+
+  $("go").addEventListener("click", () => {
+    $("go").disabled = true;   // le robot passe en mission au prochain état reçu
+    command("mission", {
+      start: parseNode($("start").value),
+      destination: parseNode($("destination").value),
+      heading: $("heading").value,
+    });
+  });
+  $("halt").addEventListener("click", () => command("stop", {}));
+  for (const id of ["start", "destination"]) $(id).addEventListener("change", refreshControls);
+
+  // Position du clic plutôt que l'élément touché : la grille est redessinée pendant le clic.
+  svg.addEventListener("click", (event) => {
+    if (!latest || latest.state !== "IDLE") return;
+    const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.getScreenCTM().inverse());
+    const x = Math.round((point.x - MARGIN) / STEP), y = Math.round((point.y - MARGIN) / STEP);
+    const n = latest.grid_nodes;
+    if (x < 0 || y < 0 || x >= n || y >= n) return;
+    if (Math.hypot(point.x - px(x), point.y - px(y)) > STEP / 2) return;
+    $(nextPick).value = `${x},${y}`;
+    nextPick = nextPick === "start" ? "destination" : "start";
+    refreshControls();
+  });
 
   const chip = (id, text, cls) => {
     const node = document.getElementById(id);
@@ -121,15 +245,21 @@
         throw new Error(response.status);
       } else {
         const s = await response.json();
-        drawGrid(s);
+        latest = s;
+        fillNodes(s.grid_nodes);
+        refreshControls();
         chip("link", "En direct", "on");
         chip("state", STATE_LABEL[s.state] || s.state, "");
-        chip("position", s.position ? `Nœud (${s.position[0]}, ${s.position[1]})` : "Avant le départ", "");
+        chip("position", s.position ? `Nœud (${s.position[0]}, ${s.position[1]})`
+                                    : s.start ? "Avant le départ" : "Aucune mission", "");
+        if (s.state === "IDLE" && s.start && !s.returned_home) chip("state", "Mission arrêtée", "off");
         chip("line", s.line_detected ? "Ligne détectée" : "Ligne non détectée", s.line_detected ? "on" : "");
         chip("reached", null, s.destination_reached ? "on" : "");
         chip("home", null, s.returned_home ? "on" : "");
       }
     } catch (error) {
+      latest = null;
+      refreshControls();
       chip("link", "Robot hors ligne", "off");
     }
     setTimeout(poll, POLL_MS);

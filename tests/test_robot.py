@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -22,9 +24,9 @@ from connections.base import RobotConnection  # noqa: E402
 from planning.direction import Direction  # noqa: E402
 from planning.navigation import Grid, Mission, Navigation  # noqa: E402
 from robot.control import Control  # noqa: E402
-from robot.state_machine import get_turn_state, run_state_machine  # noqa: E402
+from robot.state_machine import get_turn_state, run_state_machine, serve_missions  # noqa: E402
 from robot.states import Mode, RobotState  # noqa: E402
-from robot.telemetry import TelemetryServer, make_status  # noqa: E402
+from robot.telemetry import MissionRequest, TelemetryServer, make_status, parse_mission  # noqa: E402
 from vision.image_processor import ImageProcessor, LineDetection  # noqa: E402
 
 
@@ -189,6 +191,8 @@ class FakeProcessor(ImageProcessor):
 
 
 class Recorder:
+    stop_requested = False
+
     def __init__(self) -> None:
         self.statuses: list = []
 
@@ -268,9 +272,9 @@ def test_serveur_de_telemetrie() -> None:
             urllib.request.urlopen(base + "/state.json")
         assert error.value.code == 503
 
-        mission = Mission(Navigation().generate_path(Grid(4), (0, 1), (1, 1), Direction.SOUTH))
+        mission = Mission(Navigation().generate_path(Grid(4), (0, 1), (1, 1), Direction.SOUTH), Direction.EAST)
         mission.on_intersection()
-        server.publish(make_status(Mode.GRID, RobotState.FOLLOWING, 5, mission, Direction.EAST, True, False))
+        server.publish(make_status(Mode.GRID, RobotState.FOLLOWING, 5, mission, True, False))
         with urllib.request.urlopen(base + "/state.json") as response:
             state = json.loads(response.read())
         assert state["state"] == "FOLLOWING"
@@ -279,17 +283,178 @@ def test_serveur_de_telemetrie() -> None:
         assert state["grid_nodes"] == 5
 
         with urllib.request.urlopen(base + "/") as response:
-            assert b"Robot en direct" in response.read()
+            assert b"Mode livraison" in response.read()
     finally:
         server.close()
 
 
+# --- Commande depuis l'interface -------------------------------------------------------------
+
+def post(port: int, path: str, payload: object, content_type: str = "application/json") -> Tuple[int, dict]:
+    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", json.dumps(payload).encode(),
+                                     {"Content-Type": content_type})
+    try:
+        with urllib.request.urlopen(request) as response:
+            return response.status, json.loads(response.read())
+    except urllib.error.HTTPError as error:
+        return error.code, json.loads(error.read())
+
+
+def state_of(port: int) -> dict:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}/state.json") as response:
+        return json.loads(response.read())
+
+
+def wait_until(condition: object, timeout: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():  # type: ignore[operator]
+        assert time.monotonic() < deadline, "condition jamais atteinte"
+        time.sleep(0.005)
+
+
+MISSION = {"start": [0, 1], "destination": [1, 1], "heading": "SOUTH"}
+
+
+def test_parse_mission_valide() -> None:
+    assert parse_mission(json.dumps(MISSION).encode(), 5) == MissionRequest((0, 1), (1, 1), Direction.SOUTH)
+
+
+@pytest.mark.parametrize("body", [
+    b"pas du json",
+    b"[]",
+    b"{}",
+    json.dumps({**MISSION, "start": [5, 0]}).encode(),
+    json.dumps({**MISSION, "start": [-1, 0]}).encode(),
+    json.dumps({**MISSION, "start": [0.5, 0]}).encode(),
+    json.dumps({**MISSION, "start": [True, 0]}).encode(),
+    json.dumps({**MISSION, "start": "0,1"}).encode(),
+    json.dumps({**MISSION, "destination": [0, 1]}).encode(),
+    json.dumps({**MISSION, "heading": "HAUT"}).encode(),
+    json.dumps({**MISSION, "heading": ["SOUTH"]}).encode(),
+])
+def test_parse_mission_refuse_les_ordres_invalides(body: bytes) -> None:
+    with pytest.raises(ValueError):
+        parse_mission(body, 5)
+
+
+class PacedConnection(FakeConnection):
+    """Horloge simulée rapide, arrêtée sur demande du test."""
+
+    def __init__(self) -> None:
+        super().__init__(max_steps=10 ** 9)
+        self.finished = False
+
+    def step(self) -> bool:
+        time.sleep(0.0005)
+        super().step()
+        return not self.finished
+
+
+@pytest.fixture
+def robot() -> object:
+    server = TelemetryServer(port=0)
+    serial, connection = FakeSerial(), PacedConnection()
+    thread = threading.Thread(target=serve_missions, args=(connection, serial, server, FakeProcessor()))
+    thread.start()
+    port = server._server.server_address[1]
+    wait_until(lambda: connection.steps > 2)
+    yield port, serial, connection, server
+    connection.finished = True
+    thread.join(10)
+    assert not thread.is_alive()
+    server.close()
+
+
+def test_le_robot_ne_bouge_pas_avant_demarrer(robot: tuple) -> None:
+    port, serial, connection, _ = robot
+    steps = connection.steps
+    wait_until(lambda: connection.steps > steps + 100)
+    assert serial.commands == [], "aucune commande moteur avant le clic sur Démarrer"
+    assert connection.published > 0, "la caméra reste visible pour placer le robot"
+    state = state_of(port)
+    assert state["state"] == "IDLE"
+    assert state["start"] is None and state["route"] == []
+    assert state["grid_nodes"] == 5
+
+
+def test_demarrer_execute_l_aller_retour_puis_attend(robot: tuple) -> None:
+    port, serial, _, _ = robot
+    assert post(port, "/mission", MISSION) == (200, {"error": None})
+    wait_until(lambda: serial.commands)
+    wait_until(lambda: state_of(port)["returned_home"] and state_of(port)["state"] == "IDLE")
+    state = state_of(port)
+    assert state["destination_reached"] and state["position"] == [0, 1]
+    assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
+
+    # Le robot accepte une nouvelle livraison, et le résultat précédent ne reste pas affiché.
+    assert post(port, "/mission", {**MISSION, "destination": [0, 3]})[0] == 200
+    wait_until(lambda: state_of(port)["destination"] == [0, 3])
+    assert not state_of(port)["returned_home"]
+
+
+def test_arreter_coupe_les_moteurs_immediatement(robot: tuple) -> None:
+    port, serial, _, _ = robot
+    far = {"start": [0, 0], "destination": [4, 4], "heading": "SOUTH"}
+    assert post(port, "/mission", far)[0] == 200
+    wait_until(lambda: any(c != (0.0, 0.0, 0.0, 0.0) for c in serial.commands))
+
+    assert post(port, "/stop", {})[0] == 200
+    wait_until(lambda: state_of(port)["state"] == "IDLE")
+    assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
+    count = len(serial.commands)
+    time.sleep(0.05)
+    assert len(serial.commands) == count, "plus aucune commande moteur après l'arrêt"
+    assert not state_of(port)["returned_home"]
+
+    # L'arrêt ne doit pas empêcher la mission suivante.
+    assert post(port, "/mission", MISSION)[0] == 200
+    wait_until(lambda: state_of(port)["returned_home"] and state_of(port)["state"] == "IDLE")
+
+
+def test_deuxieme_ordre_refuse_pendant_une_mission(robot: tuple) -> None:
+    port, _, _, _ = robot
+    assert post(port, "/mission", {"start": [0, 0], "destination": [4, 4], "heading": "SOUTH"})[0] == 200
+    assert post(port, "/mission", MISSION)[0] == 409
+    post(port, "/stop", {})
+
+
+def test_ordre_invalide_ne_lance_rien(robot: tuple) -> None:
+    port, serial, connection, _ = robot
+    status, body = post(port, "/mission", {**MISSION, "destination": [0, 1]})
+    assert status == 400 and "différents" in body["error"]
+    steps = connection.steps
+    wait_until(lambda: connection.steps > steps + 20)
+    assert serial.commands == []
+
+
+def test_autre_site_ne_peut_pas_demarrer_le_robot(robot: tuple) -> None:
+    """Un formulaire d'un autre site ne peut envoyer que du texte, sans passer de contrôle CORS."""
+    port, serial, connection, _ = robot
+    assert post(port, "/mission", MISSION, content_type="text/plain")[0] == 415
+    steps = connection.steps
+    wait_until(lambda: connection.steps > steps + 20)
+    assert serial.commands == []
+
+
+def test_arret_au_repos_n_annule_pas_la_mission_suivante(robot: tuple) -> None:
+    port, _, _, _ = robot
+    assert post(port, "/stop", {})[0] == 200
+    assert post(port, "/mission", MISSION)[0] == 200
+    wait_until(lambda: state_of(port)["returned_home"])
+
+
 # --- Point d'entrée --------------------------------------------------------------------------
 
-def test_main_ferme_tout_si_le_materiel_est_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    telemetry, dashboard = mock.MagicMock(), mock.MagicMock()
+def _patch_main(monkeypatch: pytest.MonkeyPatch) -> Tuple[mock.MagicMock, mock.MagicMock, mock.MagicMock]:
+    telemetry, dashboard, opened = mock.MagicMock(), mock.MagicMock(), mock.MagicMock()
     monkeypatch.setattr(EiNav, "start_telemetry", lambda: telemetry)
     monkeypatch.setattr(EiNav, "start_dashboard", lambda: dashboard)
+    monkeypatch.setattr(EiNav, "open_interface", opened)
+    return telemetry, dashboard, opened
+
+
+def test_main_ferme_tout_si_le_materiel_est_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    telemetry, dashboard, opened = _patch_main(monkeypatch)
 
     def no_arduino(simulation: bool) -> None:
         raise OSError("/dev/ttyACM0 introuvable")
@@ -297,24 +462,35 @@ def test_main_ferme_tout_si_le_materiel_est_absent(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(EiNav, "create_environment", no_arduino)
     with pytest.raises(OSError):
         EiNav.main()
+    opened.assert_called_once_with(dashboard)
     telemetry.close.assert_called_once()
     dashboard.terminate.assert_called_once()
 
 
-def test_main_garde_le_tableau_de_bord_jusqu_a_ctrl_c(monkeypatch: pytest.MonkeyPatch) -> None:
-    telemetry, dashboard, connection, serial = (mock.MagicMock() for _ in range(4))
-    monkeypatch.setattr(EiNav, "start_telemetry", lambda: telemetry)
-    monkeypatch.setattr(EiNav, "start_dashboard", lambda: dashboard)
-    monkeypatch.setattr(EiNav, "create_environment", lambda simulation: (connection, serial))
-    monkeypatch.setattr(EiNav, "run_state_machine", lambda *args, **kwargs: None)
+def test_main_ouvre_l_interface_avant_le_robot_et_ferme_sur_ctrl_c(monkeypatch: pytest.MonkeyPatch) -> None:
+    telemetry, dashboard, opened = _patch_main(monkeypatch)
+    connection, serial = mock.MagicMock(), mock.MagicMock()
 
-    def ctrl_c(_: float) -> None:
-        telemetry.close.assert_not_called()  # encore consultable après la mission
+    def environment(simulation: bool) -> Tuple[mock.MagicMock, mock.MagicMock]:
+        opened.assert_called_once_with(dashboard)
+        return connection, serial
+
+    def ctrl_c(*args: object) -> None:
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(EiNav.time, "sleep", ctrl_c)
+    monkeypatch.setattr(EiNav, "create_environment", environment)
+    monkeypatch.setattr(EiNav, "serve_missions", ctrl_c)
     EiNav.main()
     serial.disconnect.assert_called_once()
     connection.close.assert_called_once()
     telemetry.close.assert_called_once()
     dashboard.terminate.assert_called_once()
+
+
+def test_main_s_arrete_si_l_interface_est_indisponible(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(EiNav, "start_telemetry", lambda: None)
+    create = mock.MagicMock()
+    monkeypatch.setattr(EiNav, "create_environment", create)
+    with pytest.raises(SystemExit):
+        EiNav.main()
+    create.assert_not_called()
