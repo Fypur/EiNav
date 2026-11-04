@@ -13,7 +13,7 @@ class Control:
 
     Propriété utile : un filtre linéaire conserve l'intégrale de sa consigne. Si la consigne
     de rotation dure T puis retombe à 0, l'angle parcouru une fois le robot arrêté est le même
-    que sans rampe. `turn_duration` garde donc son sens, à condition d'attendre l'arrêt complet.
+    que sans rampe. Les durées de rotation gardent donc leur sens, à condition d'attendre l'arrêt complet.
 
     La correction de suivi de ligne n'est pas filtrée : un retard dans la boucle de
     direction ferait osciller le robot autour de la ligne.
@@ -68,9 +68,10 @@ class Control:
         """Suit la ligne : `error` vaut -1 (ligne à gauche) à 1 (ligne à droite)."""
         self._drive(now, utils.BASE_SPEED, 0.0, correction=error * utils.KP)
 
-    def turn(self, now: float, left: bool, start_time: float, quarter_turns: int = 1) -> bool:
-        """Tourne sur place. Renvoie True quand la rotation est finie et le robot arrêté."""
-        turning = now - start_time < utils.TURN_DURATION * quarter_turns
+    def turn(self, now: float, left: bool, start_time: float, half_turn: bool = False) -> bool:
+        """Tourne sur place, de 90° ou 180°. Renvoie True quand la rotation est finie et le robot arrêté."""
+        duration = utils.TURN_180_DURATION if half_turn else utils.TURN_90_DURATION
+        turning = now - start_time < duration
         speed = utils.TURN_SPEED if turning else 0.0
         self._drive(now, 0.0, -speed if left else speed)
         return not turning and self.is_stopped

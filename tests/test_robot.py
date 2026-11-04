@@ -107,15 +107,16 @@ def test_acceleration_et_deceleration_exponentielles() -> None:
     assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
 
 
-@pytest.mark.parametrize("quarters", [1, 2])
-def test_rotation_conserve_angle_malgre_les_rampes(quarters: int) -> None:
+@pytest.mark.parametrize("half_turn", [False, True])
+def test_rotation_conserve_angle_malgre_les_rampes(half_turn: bool) -> None:
     control, serial = _make_control()
     dt = 0.01
     t = 0.0
-    while not control.turn(t, False, 0.0, quarter_turns=quarters):
+    while not control.turn(t, False, 0.0, half_turn=half_turn):
         t += dt
     integral = sum(c[0] for c in serial.commands) * dt
-    assert integral == pytest.approx(robot_utils.TURN_SPEED * robot_utils.TURN_DURATION * quarters, rel=0.02)
+    duration = robot_utils.TURN_180_DURATION if half_turn else robot_utils.TURN_90_DURATION
+    assert integral == pytest.approx(robot_utils.TURN_SPEED * duration, rel=0.02)
     assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
 
 
@@ -302,6 +303,30 @@ def test_chemin_impossible() -> None:
     with pytest.raises(ValueError):
         run_state_machine(FakeConnection(), FakeSerial(), (0, 0), (9, 9), Direction.SOUTH,  # type: ignore[arg-type]
                           processor=FakeProcessor())
+
+
+@pytest.mark.parametrize("heading,state,used,other", [
+    (Direction.NORTH, RobotState.TURNING_180, "TURN_180_DURATION", "TURN_90_DURATION"),
+    (Direction.EAST, RobotState.TURNING_MINUS_90, "TURN_90_DURATION", "TURN_180_DURATION"),
+    (Direction.WEST, RobotState.TURNING_90, "TURN_90_DURATION", "TURN_180_DURATION"),
+])
+def test_chaque_virage_utilise_sa_duree(heading: Direction, state: RobotState, used: str, other: str,
+                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Départ de (0, 0) vers le sud : l'orientation initiale impose le virage testé."""
+    def steps_in_state() -> int:
+        recorder, _ = _run_without_seeing_intersection((0, 0), (0, 2), heading)
+        return sum(1 for s in recorder.statuses if s.state == state.name)
+
+    monkeypatch.setattr(robot_utils, used, 1.0)
+    monkeypatch.setattr(robot_utils, other, 0.5)
+    reference = steps_in_state()
+    assert reference > 0
+
+    monkeypatch.setattr(robot_utils, other, 2.0)
+    assert steps_in_state() == reference, "l'autre durée n'a aucun effet"
+
+    monkeypatch.setattr(robot_utils, used, 2.0)
+    assert steps_in_state() > reference, "cette durée allonge le virage"
 
 
 # --- Parcours en 8 ---------------------------------------------------------------------------

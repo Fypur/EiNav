@@ -241,7 +241,7 @@ def run_state_machine(
                     robot_state = RobotState.FOLLOWING
 
             elif robot_state == RobotState.TURNING_180:
-                if controller.turn(current_time, False, action_start_time, quarter_turns=2):
+                if controller.turn(current_time, False, action_start_time, half_turn=True):
                     print("Demi-tour terminé.")
                     robot_state = RobotState.FOLLOWING
 

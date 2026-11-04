@@ -14,7 +14,8 @@ MAX_WHEEL_SPEED = 1.0  # au-delà, le PWM déborde sur l'Arduino et la roue rale
 KP = 0.15
 
 # Durées, en secondes.
-TURN_DURATION = 1.5  # quart de tour
+TURN_90_DURATION = 1.5  # rotation de 90°
+TURN_180_DURATION = 3.0  # demi-tour
 APPROACH_DURATION = 0.9  # approche du centre d'un croisement, à FORWARD_SPEED
 RAMP_TIME_CONSTANT = 0.15  # constante de temps des accélérations et décélérations
 

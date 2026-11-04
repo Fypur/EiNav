@@ -95,7 +95,7 @@ def test_kp_change_la_correction() -> None:
 
 
 def test_duree_de_virage_appliquee() -> None:
-    tuning.update({"TURN_DURATION": 0.5})
+    tuning.update({"TURN_90_DURATION": 0.5})
     serial = FakeSerial()
     control = Control(serial)  # type: ignore[arg-type]
     assert control.turn(0.4, False, 0.0) is False
@@ -103,6 +103,32 @@ def test_duree_de_virage_appliquee() -> None:
     while not control.turn(t, False, 0.0):
         t += 0.01
     assert t < 2.0
+
+
+def _turn_time(half_turn: bool) -> float:
+    """Durée pendant laquelle la consigne de rotation est active."""
+    control = Control(FakeSerial())  # type: ignore[arg-type]
+    t = 0.0
+    while t < 20.0 and now_turning(control, t, half_turn):
+        t += 0.01
+    return t
+
+
+def now_turning(control: Control, t: float, half_turn: bool) -> bool:
+    control.turn(t, False, 0.0, half_turn=half_turn)
+    return t < (robot_utils.TURN_180_DURATION if half_turn else robot_utils.TURN_90_DURATION) or not control.is_stopped
+
+
+def test_durees_de_90_et_180_independantes() -> None:
+    tuning.update({"TURN_90_DURATION": 1.0})
+    half_before = _turn_time(True)
+    tuning.update({"TURN_90_DURATION": 2.0})
+    assert _turn_time(True) == half_before, "changer le 90° ne touche pas au demi-tour"
+
+    quarter_before = _turn_time(False)
+    tuning.update({"TURN_180_DURATION": 7.0})
+    assert _turn_time(False) == quarter_before, "changer le demi-tour ne touche pas au 90°"
+    assert _turn_time(True) > half_before
 
 
 def test_approche_utilise_la_vitesse_d_approche() -> None:
@@ -227,7 +253,7 @@ def post(port: int, path: str, payload: object, content_type: str = "application
 def test_api_lecture_et_modification(port: int) -> None:
     with urllib.request.urlopen(f"http://127.0.0.1:{port}/settings") as response:
         listed = json.loads(response.read())["settings"]
-    assert {"KP", "BASE_SPEED", "APPROACH_DURATION", "TURN_DURATION"} <= {e["key"] for e in listed}
+    assert {"KP", "BASE_SPEED", "APPROACH_DURATION", "TURN_90_DURATION", "TURN_180_DURATION"} <= {e["key"] for e in listed}
 
     status, body = post(port, "/settings", {"values": {"KP": 0.25}})
     assert status == 200 and robot_utils.KP == 0.25
