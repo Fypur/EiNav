@@ -32,6 +32,7 @@ from planning.direction import Direction
 from planning.navigation import Mission, Position
 from planning.utils import GRID_SIZE
 from robot import tuning
+from robot.obstacle import ObstacleState, ObstacleStatus
 from robot.utils import DASHBOARD_PORT, MAX_REQUEST_BYTES, TELEMETRY_PORT
 from robot.states import Mode, RobotState
 
@@ -120,6 +121,8 @@ class RobotStatus:
     line_detected: bool
     is_intersection: bool
     line_lost: bool  # la dernière mission s'est arrêtée faute de voir la ligne
+    obstacle_state: str
+    obstacle_cm: Optional[int]  # None : aucune mesure valide
 
 
 def make_status(
@@ -130,6 +133,7 @@ def make_status(
     line_detected: bool = False,
     is_intersection: bool = False,
     line_lost: bool = False,
+    obstacle: ObstacleStatus = ObstacleStatus(ObstacleState.NO_MEASURE, None),
 ) -> RobotStatus:
     return RobotStatus(
         mode=mode.name,
@@ -146,6 +150,8 @@ def make_status(
         line_detected=line_detected,
         is_intersection=is_intersection,
         line_lost=line_lost,
+        obstacle_state=obstacle.state.name,
+        obstacle_cm=obstacle.distance_cm,
     )
 
 

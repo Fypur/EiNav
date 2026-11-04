@@ -12,6 +12,9 @@ BAUD_RATE = 115200
 SERIAL_TIMEOUT = 0.1  # secondes
 ARDUINO_BOOT_DELAY = 2.0  # secondes
 
+# Capteur ultrason.
+ULTRASOUND_MAX_CM = 200  # distance renvoyée par l'Arduino quand rien n'est vu (ULTRASON_code dans Commandes.cpp)
+
 # Conversion d'une vitesse (fraction de la vitesse maximale) en commande moteur.
 PWM_MAX = 255
 WEBOTS_SPEED_SCALE = 10

@@ -5,12 +5,12 @@
 from __future__ import annotations
 
 import time
-from typing import Tuple
+from typing import Optional, Tuple
 
 import serial
 
 from connections import utils
-from connections.utilitaries import WaitACK, retrCmdi, sendCmdi
+from connections.utilitaries import WaitACK, retrCmdi, retrCmdli, sendCmdi
 
 
 class Arduino:
@@ -76,3 +76,8 @@ class Arduino:
     def GetSpeed(self) -> Tuple[int, int, int, int]:
         vit1, vit2, vit3, vit4 = retrCmdi(self.serialport, b'P')
         return vit1, vit2, vit3, vit4
+
+    #   distance mesurée par le capteur ultrason, en cm (None : pas de réponse de l'Arduino)
+    def GetDistance(self) -> Optional[int]:
+        reply = retrCmdli(self.serialport, b'S')
+        return None if reply is None else reply[1]

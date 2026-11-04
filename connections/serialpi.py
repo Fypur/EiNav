@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 from connections import utils
 from connections.arduino import Arduino
@@ -37,6 +37,12 @@ class Serial:
             self.motors[3].setVelocity(rr * utils.WEBOTS_SPEED_SCALE)
         else:
             self.arduino.SendSpeeds(*(int(speed * utils.PWM_MAX) for speed in (fl, fr, rr, rl)))
+
+    def get_distance_cm(self) -> Optional[int]:
+        """Distance de l'obstacle devant le capteur. Webots n'a pas de capteur : rien n'y est jamais vu."""
+        if self.simulation:
+            return utils.ULTRASOUND_MAX_CM
+        return self.arduino.GetDistance()
 
     def get_speeds_tick_per_second(self) -> Tuple[int, int, int, int]:
         if not self.simulation:

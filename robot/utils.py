@@ -20,6 +20,12 @@ APPROACH_DURATION = 0.9  # approche du centre d'un croisement, à FORWARD_SPEED
 RAMP_TIME_CONSTANT = 0.15  # constante de temps des accélérations et décélérations
 LINE_LOST_TIMEOUT = 1.0  # cahier des charges : en suivi, arrêt si aucune ligne n'est vue pendant plus longtemps
 
+# Obstacles : distances en cm, mesurées depuis le capteur ultrason (cahier des charges).
+OBSTACLE_SLOWDOWN_CM = 60  # le robot commence à ralentir en dessous
+OBSTACLE_STOP_CM = 20  # arrêt complet
+OBSTACLE_RESUME_CM = 25  # une fois arrêté, le robot ne repart qu'à partir de cette distance
+OBSTACLE_FILTER_READINGS = 3  # nombre de mesures gardées, dont on retient la plus petite
+
 # Écart à la consigne en dessous duquel la vitesse est considérée comme atteinte
 # (une exponentielle n'atteint jamais sa consigne).
 SPEED_EPSILON = 0.01

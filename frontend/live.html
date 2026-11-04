@@ -33,6 +33,7 @@
   .chip { padding:3px 10px; border-radius:999px; border:1px solid var(--line); color:var(--muted); font-size:.85rem; }
   .chip.on { color:#06281E; background:var(--robot); border-color:var(--robot); font-weight:600; }
   .chip.off { color:#fff; background:var(--off); border-color:var(--off); font-weight:600; }
+  .chip.warn { color:#2B1B02; background:var(--goal); border-color:var(--goal); font-weight:600; }
   .legend { margin:8px 0 0; color:var(--muted); font-size:.85rem; }
   #delivery { grid-column:1 / -1; }
   #modes { display:inline-flex; flex-wrap:wrap; margin-bottom:12px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
@@ -81,6 +82,7 @@
     <span class="chip" id="state">–</span>
     <span class="chip" id="position" data-only="grid">–</span>
     <span class="chip" id="line">Ligne</span>
+    <span class="chip" id="obstacle">Ultrason</span>
     <span class="chip" id="reached" data-only="grid">Destination atteinte</span>
     <span class="chip" id="home" data-only="grid">Retour au départ</span>
   </div>
@@ -331,6 +333,12 @@
         if (s.line_lost) chip("state", "Arrêt : ligne perdue", "off");
         else if (s.state === "IDLE" && s.start && !s.returned_home) chip("state", "Mission arrêtée", "off");
         chip("line", s.line_detected ? "Ligne détectée" : "Ligne non détectée", s.line_detected ? "on" : "");
+        chip("obstacle", ...({
+          CLEAR: ["Aucun obstacle proche", ""],
+          SLOWING: [`Obstacle à ${s.obstacle_cm} cm : ralentit`, "warn"],
+          BLOCKED: [`Obstacle à ${s.obstacle_cm} cm : arrêt`, "off"],
+          NO_MEASURE: ["Ultrason sans mesure : ignoré", "warn"],
+        }[s.obstacle_state]));
         chip("reached", null, s.destination_reached ? "on" : "");
         chip("home", null, s.returned_home ? "on" : "");
       }

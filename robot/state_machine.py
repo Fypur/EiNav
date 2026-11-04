@@ -10,6 +10,7 @@ from planning.navigation import Grid, Mission, Navigation, Position
 from planning.utils import GRID_SIZE
 from robot import utils
 from robot.control import Control
+from robot.obstacle import ObstacleGuard
 from robot.states import Mode, RobotState
 from robot.telemetry import FigureEightRequest, Order, TelemetryServer, make_status
 from vision.image_processor import ImageProcessor, LineDetection
@@ -28,13 +29,16 @@ def get_turn_state(current_dir: Direction, next_dir: Direction) -> RobotState:
 
 def wait_for_mission(
     connection: RobotConnection,
+    serial: Serial,
     telemetry: TelemetryServer,
     processor: ImageProcessor,
     last_mission: Optional[Mission] = None,
     line_lost: bool = False,
 ) -> Optional[Order]:
     """Moteurs coupés, diffuse la caméra jusqu'à un ordre de l'interface (None : fin du programme)."""
+    obstacle = ObstacleGuard()
     while connection.step():
+        obstacle.update(serial.get_distance_cm())  # pour vérifier le capteur avant de démarrer
         frame = connection.get_frame()
         line_detected = is_intersection = False
         if frame is not None:
@@ -42,7 +46,7 @@ def wait_for_mission(
             connection.publish_frame(processor.annotate(frame, detection))
             line_detected, is_intersection = detection.cx is not None, detection.is_intersection
         telemetry.publish(make_status(Mode.GRID, RobotState.IDLE, GRID_SIZE + 1, last_mission,
-                                      line_detected, is_intersection, line_lost))
+                                      line_detected, is_intersection, line_lost, obstacle.status))
         request = telemetry.take_mission()
         if request is not None:
             return request
@@ -60,7 +64,7 @@ def serve_missions(
     last_mission: Optional[Mission] = None
     line_lost = False
     while True:
-        request = wait_for_mission(connection, telemetry, processor, last_mission, line_lost)
+        request = wait_for_mission(connection, serial, telemetry, processor, last_mission, line_lost)
         if request is None:
             return
         try:
@@ -80,6 +84,7 @@ class LineLossWatch:
 
     Le suivi ne se termine que sur une image où la ligne est vue : le compteur est donc
     toujours à zéro à la reprise suivante, et un virage ou une traversée n'est jamais compté.
+    `now` est `Control.drive_time` : le temps passé bloqué devant un obstacle ne compte pas non plus.
     """
 
     def __init__(self) -> None:
@@ -115,12 +120,14 @@ def run_figure_eight(
     """
     controller = Control(serial)
     line_watch = LineLossWatch()
+    obstacle = ObstacleGuard()
     robot_state = RobotState.FOLLOWING
     crossing_start = crossing_duration = 0.0
     # Le robot peut être posé sur le croisement : il ne compte qu'une fois quitté.
     intersection_armed = False
 
-    telemetry.publish(make_status(Mode.HUIT, robot_state, GRID_SIZE + 1, None))
+    controller.set_speed_cap(obstacle.update(serial.get_distance_cm()))
+    telemetry.publish(make_status(Mode.HUIT, robot_state, GRID_SIZE + 1, None, obstacle=obstacle.status))
 
     try:
         while connection.step():
@@ -128,6 +135,7 @@ def run_figure_eight(
                 print("Arrêt demandé depuis l'interface.")
                 break
 
+            controller.set_speed_cap(obstacle.update(serial.get_distance_cm()))
             current_time = connection.get_time()
             frame = connection.get_frame()
             if frame is None:  # image perdue : on ne roule pas à l'aveugle
@@ -138,7 +146,7 @@ def run_figure_eight(
             connection.publish_frame(processor.annotate(frame, detection))
 
             if robot_state == RobotState.FOLLOWING:
-                if line_watch.is_lost(current_time, detection.cx is not None):
+                if line_watch.is_lost(controller.drive_time, detection.cx is not None):
                     print("Ligne perdue : arrêt du robot.")
                     return True
 
@@ -147,17 +155,18 @@ def run_figure_eight(
                 if detection.is_intersection and intersection_armed:
                     intersection_armed = False
                     robot_state = RobotState.APPROACHING_INTERSECTION
-                    crossing_start = current_time
+                    crossing_start = controller.drive_time
                     crossing_duration = controller.approach_duration(utils.APPROACH_DURATION)
                 _steer(controller, detection, current_time)
             else:
                 # Tout droit : la correction suivrait l'autre branche du croisement.
                 controller.forward(current_time)
-                if current_time - crossing_start > crossing_duration:
+                if controller.drive_time - crossing_start > crossing_duration:
                     robot_state = RobotState.FOLLOWING
 
             telemetry.publish(make_status(Mode.HUIT, robot_state, GRID_SIZE + 1, None,
-                                          detection.cx is not None, detection.is_intersection))
+                                          detection.cx is not None, detection.is_intersection,
+                                          obstacle=obstacle.status))
     finally:
         controller.halt()
     return False
@@ -178,6 +187,7 @@ def run_state_machine(
     """
     controller = Control(serial)
     line_watch = LineLossWatch()
+    obstacle = ObstacleGuard()
     processor = processor or ImageProcessor()
 
     grid = Grid(GRID_SIZE)
@@ -194,6 +204,7 @@ def run_state_machine(
     # Posé sur le croisement de départ, le robot ne peut pas le voir : il y est considéré comme arrêté.
     robot_state = RobotState.STOP_ON_INTERSECTION
     action_start_time = connection.get_time()
+    approach_start = 0.0
     approach_duration = utils.APPROACH_DURATION
     # Empêche de détecter plusieurs fois la même intersection (dont celle de départ, si elle est visible)
     intersection_armed = False
@@ -201,8 +212,9 @@ def run_state_machine(
     def publish(line_detected: bool = False, is_intersection: bool = False) -> None:
         if telemetry is not None:
             telemetry.publish(make_status(Mode.GRID, robot_state, grid.nb_nodes, mission,
-                                          line_detected, is_intersection))
+                                          line_detected, is_intersection, obstacle=obstacle.status))
 
+    controller.set_speed_cap(obstacle.update(serial.get_distance_cm()))
     publish()
 
     try:
@@ -211,6 +223,7 @@ def run_state_machine(
                 print("Arrêt demandé depuis l'interface.")
                 break
 
+            controller.set_speed_cap(obstacle.update(serial.get_distance_cm()))
             current_time = connection.get_time()
             frame = connection.get_frame()
             if frame is None:  # image perdue : on ne roule pas à l'aveugle
@@ -222,7 +235,7 @@ def run_state_machine(
             cx, is_intersection = detection.cx, detection.is_intersection
 
             if robot_state == RobotState.FOLLOWING:
-                if line_watch.is_lost(current_time, cx is not None):
+                if line_watch.is_lost(controller.drive_time, cx is not None):
                     print("Ligne perdue : arrêt du robot.")
                     mission.line_lost = True
                     break
@@ -234,7 +247,7 @@ def run_state_machine(
                 if is_intersection and intersection_armed:
                     intersection_armed = False
                     robot_state = RobotState.APPROACHING_INTERSECTION
-                    action_start_time = current_time
+                    approach_start = controller.drive_time
                     approach_duration = controller.approach_duration(utils.APPROACH_DURATION)
                     print("Intersection détectée !")
 
@@ -243,7 +256,7 @@ def run_state_machine(
             elif robot_state == RobotState.APPROACHING_INTERSECTION:
                 controller.forward(current_time)
 
-                if current_time - action_start_time > approach_duration:
+                if controller.drive_time - approach_start > approach_duration:
                     robot_state = RobotState.STOP_ON_INTERSECTION
                     action_start_time = current_time
                     print("Arrivée au centre de l'intersection.")

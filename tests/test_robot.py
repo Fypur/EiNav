@@ -44,6 +44,9 @@ class FakeSerial:
     def send_wheel_speeds(self, fl: float, fr: float, rr: float, rl: float) -> None:
         self.commands.append((fl, fr, rr, rl))
 
+    def get_distance_cm(self) -> Optional[int]:
+        return 200  # rien devant le robot
+
     def disconnect(self) -> None:
         pass
 

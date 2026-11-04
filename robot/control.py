@@ -28,6 +28,10 @@ class Control:
         self._linear = 0.0
         self._angular = 0.0  # > 0 : rotation à droite
         self._last_time: Optional[float] = None
+        self._speed_cap = math.inf
+        # Temps passé sans être bloqué par un obstacle : un robot immobile n'avance pas vers
+        # le centre d'un croisement, et ne perd pas la ligne.
+        self.drive_time = 0.0
 
     @property
     def is_stopped(self) -> bool:
@@ -37,12 +41,22 @@ class Control:
         value = current + (target - current) * alpha
         return target if abs(target - value) < utils.SPEED_EPSILON else value
 
+    def set_speed_cap(self, cap: float) -> None:
+        """Limite la vitesse d'avance (obstacle). Les rotations sur place ne sont pas concernées."""
+        self._speed_cap = cap
+
     def _drive(self, now: float, linear: float, angular: float, correction: float = 0.0) -> None:
         dt = 0.0 if self._last_time is None else max(0.0, now - self._last_time)
         self._last_time = now
+        if self._speed_cap > 0.0:
+            self.drive_time += dt
         alpha = 1.0 - math.exp(-dt / utils.RAMP_TIME_CONSTANT)
-        self._linear = self._ramp(self._linear, linear, alpha)
+        # Le plafond s'applique aussi après le filtre : freiner devant un obstacle se fait sans retard.
+        self._linear = min(self._ramp(self._linear, min(linear, self._speed_cap), alpha), self._speed_cap)
         self._angular = self._ramp(self._angular, angular, alpha)
+        # La correction suit la vitesse : la trajectoire reste la même, et à l'arrêt le robot ne pivote pas.
+        if linear > self._speed_cap:
+            correction *= self._speed_cap / linear
 
         limit = utils.MAX_WHEEL_SPEED
         left = max(-limit, min(limit, self._linear + self._angular + correction))

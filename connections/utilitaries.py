@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import struct
-from typing import Tuple
+from typing import Optional, Tuple
 
 from serial import Serial as SerialPort
 
@@ -49,6 +49,16 @@ def retrCmdi(arduino: SerialPort, cmd: bytes) -> Tuple[int, int, int, int]: # re
     val4=read_i16(arduino)
     return val1,val2,val3,val4
     WaitACK(arduino)
+
+def retrCmdli(arduino: SerialPort, cmd: bytes) -> Optional[Tuple[int, int]]: # retrieve command with 1 long and 1 int
+    """Réponse de Ret2li en mode binaire : long, int, int nul. None si elle n'arrive pas à temps."""
+    arduino.write(cmd)
+    reply = arduino.read(8)
+    if len(reply) != 8:
+        arduino.reset_input_buffer()  # une fin de réponse tardive serait lue comme un acquittement
+        return None
+    val1, val2, _ = struct.unpack('<lhh', reply)
+    return val1, val2
 
 def retrCmdl(arduino: SerialPort, cmd: bytes) -> Tuple[int, int]: # retrieve command with 2 longs
     arduino.write(cmd)

@@ -41,6 +41,8 @@ Pour suivre le parcours en 8 :
 
 Dans les deux modes, si le robot en suivi de ligne ne voit plus aucune ligne pendant plus d'une seconde (`LINE_LOST_TIMEOUT` dans `robot/utils.py`), il s'arrête et l'interface affiche « Arrêt : ligne perdue ». Il repart seulement après un nouveau clic sur **Démarrer** : en livraison, il faut le reposer sur un croisement de départ.
 
+Dans les deux modes, le capteur ultrason freine le robot devant un obstacle : il ralentit à moins de 60 cm et s'arrête complètement à 20 cm, distances mesurées depuis le capteur (`OBSTACLE_*` dans `robot/utils.py`). Il repart seul quand l'obstacle s'éloigne au-delà de 25 cm. Si le capteur ne donne aucune mesure, le robot l'ignore et poursuit sa mission **sans détecter les obstacles** ; l'interface affiche alors « Ultrason sans mesure : ignoré ». Le programme `arduino/src` doit être téléversé sur la carte, car il contient la commande de lecture du capteur.
+
 Depuis un navigateur sur le même réseau :
 
 | Adresse | Contenu |
