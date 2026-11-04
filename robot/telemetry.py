@@ -5,6 +5,7 @@
     POST /mission                      {"start": [x, y], "destination": [x, y], "heading": "SOUTH"} : livraison
                                        {"mode": "HUIT"} : suivi de ligne sur le parcours en 8
     POST /stop                         coupe les moteurs immédiatement
+    POST /blocked/reset                remet dans le graphe les arêtes bloquées par un obstacle
     GET  /settings                     réglages et valeurs courantes
     POST /settings                     {"values": {"KP": 0.2}}, appliqué tout de suite
     POST /settings/reset               {"keys": ["KP"]}, ou {} pour tout réinitialiser
@@ -123,6 +124,8 @@ class RobotStatus:
     line_lost: bool  # la dernière mission s'est arrêtée faute de voir la ligne
     obstacle_state: str
     obstacle_cm: Optional[int]  # None : aucune mesure valide
+    blocked_edges: List[Tuple[Position, Position]]  # arêtes retirées du graphe
+    no_route: bool  # la dernière mission s'est arrêtée faute de chemin
 
 
 def make_status(
@@ -134,6 +137,7 @@ def make_status(
     is_intersection: bool = False,
     line_lost: bool = False,
     obstacle: ObstacleStatus = ObstacleStatus(ObstacleState.NO_MEASURE, None),
+    blocked_edges: Optional[List[Tuple[Position, Position]]] = None,
 ) -> RobotStatus:
     return RobotStatus(
         mode=mode.name,
@@ -152,6 +156,8 @@ def make_status(
         line_lost=line_lost,
         obstacle_state=obstacle.state.name,
         obstacle_cm=obstacle.distance_cm,
+        blocked_edges=blocked_edges or [],
+        no_route=mission.no_route if mission else False,
     )
 
 
@@ -161,6 +167,7 @@ class TelemetryServer:
         self._lock = threading.Lock()
         self._state_json: Optional[bytes] = None
         self._pending: Optional[Order] = None
+        self._blocked_reset = False
         self._busy = False  # une mission est en cours
         self._stop_requested = threading.Event()
         page = (FRONTEND_DIR / "live.html").read_bytes()
@@ -208,6 +215,11 @@ class TelemetryServer:
                 elif path == "/stop":
                     telemetry._request_stop()
                     self._reply(200)
+                elif path == "/blocked/reset":
+                    if telemetry._request_blocked_reset():
+                        self._reply(200)
+                    else:
+                        self._reply(409, "Une mission est en cours.")
                 elif path in ("/settings", "/settings/reset"):
                     try:
                         apply_settings(path, body)
@@ -250,6 +262,19 @@ class TelemetryServer:
                 return False
             self._pending = request
             return True
+
+    def _request_blocked_reset(self) -> bool:
+        with self._lock:
+            if self._busy or self._pending is not None:
+                return False
+            self._blocked_reset = True
+            return True
+
+    def take_blocked_reset(self) -> bool:
+        """Renvoie True une seule fois après une demande de déblocage des arêtes."""
+        with self._lock:
+            requested, self._blocked_reset = self._blocked_reset, False
+            return requested
 
     def _request_stop(self) -> None:
         with self._lock:

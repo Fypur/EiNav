@@ -47,6 +47,32 @@ class Grid:
             self.grid[i][0].left = False
             self.grid[i][size].right = False
 
+        self._blocked = set()
+
+    @property
+    def blocked_edges(self) -> List[Tuple[Position, Position]]:
+        """Arêtes supprimées du graphe, chacune avec ses deux nœuds dans l'ordre croissant."""
+        return sorted(self._blocked)
+
+    def _set_edge(self, a: Position, b: Position, is_open: bool) -> None:
+        (ax, ay), (bx, by) = sorted((a, b))
+        if ax == bx:  # verticale : a est au nord de b
+            self.grid[ay][ax].bottom = is_open
+            self.grid[by][bx].top = is_open
+        else:  # horizontale : a est à l'ouest de b
+            self.grid[ay][ax].right = is_open
+            self.grid[by][bx].left = is_open
+
+    def block_edge(self, a: Position, b: Position) -> None:
+        """Supprime du graphe l'arête entre deux nœuds voisins, dans les deux sens."""
+        self._set_edge(a, b, False)
+        self._blocked.add((min(a, b), max(a, b)))
+
+    def clear_blocked(self) -> None:
+        for a, b in self._blocked:
+            self._set_edge(a, b, True)
+        self._blocked.clear()
+
 
 class Navigation:
 
@@ -241,12 +267,25 @@ class Mission:
         self.destination_reached = False  # levé à l'arrivée à destination
         self.returned_home = False  # levé au retour sur le point de départ
         self.line_lost = False  # levé si la mission s'arrête faute de voir la ligne
+        self.no_route = False  # levé si la mission s'arrête faute de chemin
+        self.rerouted = False  # le chemin a changé à cause d'une arête bloquée
         self._index = 0
 
     @property
     def next_node(self) -> Optional[Position]:
         """Nœud vers lequel le robot se dirige (None si la mission est finie)."""
         return None if self.returned_home else self.route[self._index]
+
+    @property
+    def target(self) -> Position:
+        """Point que le robot cherche à atteindre : la destination, puis le point de départ."""
+        return self.start if self.destination_reached else self.destination
+
+    def reroute(self, path: List[Position]) -> None:
+        """Remplace le chemin. `path` part du nœud où le prochain `on_intersection` aura lieu."""
+        self.route = list(path)
+        self._index = 0
+        self.rerouted = True
 
     def on_intersection(self) -> Optional[Direction]:
         """Enregistre l'arrivée sur le nœud visé et renvoie la direction à prendre (None : fini)."""

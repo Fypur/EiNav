@@ -32,6 +32,8 @@ class Control:
         # Temps passé sans être bloqué par un obstacle : un robot immobile n'avance pas vers
         # le centre d'un croisement, et ne perd pas la ligne.
         self.drive_time = 0.0
+        # Distance parcourue depuis le dernier nœud, en vitesse x secondes.
+        self.travel = 0.0
 
     @property
     def is_stopped(self) -> bool:
@@ -54,6 +56,7 @@ class Control:
         # Le plafond s'applique aussi après le filtre : freiner devant un obstacle se fait sans retard.
         self._linear = min(self._ramp(self._linear, min(linear, self._speed_cap), alpha), self._speed_cap)
         self._angular = self._ramp(self._angular, angular, alpha)
+        self.travel += self._linear * dt
         # La correction suit la vitesse : la trajectoire reste la même, et à l'arrêt le robot ne pivote pas.
         if linear > self._speed_cap:
             correction *= self._speed_cap / linear

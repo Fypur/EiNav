@@ -53,6 +53,8 @@
   #halt:not(:disabled) { background:var(--off); border-color:var(--off); color:#fff; }
   #error { margin:8px 0 0; color:#FCA5A5; min-height:1.4em; }
   svg.picking { cursor:pointer; }
+  #blocked { margin-top:8px; padding-top:8px; border-top:1px solid var(--line); }
+  #blocked-list { margin:0 0 8px; color:#FCA5A5; font-size:.9rem; font-weight:600; }
   #tuning { grid-column:1 / -1; padding:0; }
   #tuning > summary { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; padding:12px; cursor:pointer;
                       font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
@@ -118,7 +120,11 @@
     <h2>Position sur la grille</h2>
     <svg id="grid" role="img" aria-label="Position du robot sur la grille"></svg>
     <p class="legend">D : départ. A : arrivée. La flèche est sur la dernière intersection atteinte,
-      le trait bleu est l'étape en cours.</p>
+      le trait bleu est l'étape en cours. Barré de rouge : arête bloquée par un obstacle.</p>
+    <div id="blocked" hidden>
+      <p id="blocked-list" role="status"></p>
+      <button id="clear-blocked" type="button">Débloquer les arêtes</button>
+    </div>
   </section>
   <section id="camera">
     <h2>Image traitée</h2>
@@ -178,7 +184,8 @@
     // À l'arrêt, la grille montre le choix en cours ; pendant une mission, celle du robot.
     const start = running ? status.start : parseNode($("start").value);
     const destination = running ? status.destination : parseNode($("destination").value);
-    const signature = JSON.stringify([status.state, status.route, status.position, status.heading, start, destination]);
+    const signature = JSON.stringify([status.state, status.route, status.position, status.heading, start, destination,
+                                      status.blocked_edges]);
     if (signature === drawn) return;
     drawn = signature;
 
@@ -195,6 +202,14 @@
     if (running) {
       el("polyline", { points: polyline(status.route), fill: "none", stroke: "#38BDF8",
                        "stroke-width": 6, "stroke-linejoin": "round", "stroke-linecap": "round" });
+    }
+    for (const [[ax, ay], [bx, by]] of status.blocked_edges) {
+      el("line", { x1: px(ax), y1: px(ay), x2: px(bx), y2: px(by), stroke: "#EF4444", "stroke-width": 6 });
+      const mx = (px(ax) + px(bx)) / 2, my = (px(ay) + px(by)) / 2, cross = 11;
+      for (const side of [-1, 1]) {
+        el("line", { x1: mx - cross, y1: my - side * cross, x2: mx + cross, y2: my + side * cross,
+                     stroke: "#EF4444", "stroke-width": 5, "stroke-linecap": "round" });
+      }
     }
     for (let y = 0; y < n; y++) {
       for (let x = 0; x < n; x++) el("circle", { cx: px(x), cy: px(y), r: 5, fill: "#687D99" });
@@ -248,6 +263,11 @@
     const same = !lineMode && chosen && $("start").value === $("destination").value;
     $("go").disabled = !online || running || sending || (!lineMode && (!chosen || same));
     $("halt").disabled = !running;
+    const blocked = online ? latest.blocked_edges : [];
+    $("blocked").hidden = blocked.length === 0;
+    $("blocked-list").textContent = (blocked.length > 1 ? "Arêtes bloquées : " : "Arête bloquée : ")
+      + blocked.map(([[ax, ay], [bx, by]]) => `(${ax}, ${ay}) – (${bx}, ${by})`).join(", ");
+    $("clear-blocked").disabled = running || sending;
     if (!sending && same) $("error").textContent = "Le départ et l'arrivée doivent être différents.";
     else if (!sending && $("error").dataset.same) $("error").textContent = "";
     $("error").dataset.same = same ? "1" : "";
@@ -294,6 +314,7 @@
     });
   }
   $("halt").addEventListener("click", () => command("stop", {}));
+  $("clear-blocked").addEventListener("click", () => command("blocked/reset", {}));
   for (const id of ["start", "destination"]) $(id).addEventListener("change", refreshControls);
 
   // Position du clic plutôt que l'élément touché : la grille est redessinée pendant le clic.
@@ -332,6 +353,7 @@
         chip("state", STATE_LABEL[s.state] || s.state, s.state === "DELIVERING" ? "warn" : "");
         chip("position", s.position ? `Nœud (${s.position[0]}, ${s.position[1]})` : "Aucune mission", "");
         if (s.line_lost) chip("state", "Arrêt : ligne perdue", "off");
+        else if (s.no_route) chip("state", "Arrêt : aucun chemin", "off");
         else if (s.state === "IDLE" && s.start && !s.returned_home) chip("state", "Mission arrêtée", "off");
         chip("line", s.line_detected ? "Ligne détectée" : "Ligne non détectée", s.line_detected ? "on" : "");
         chip("obstacle", ...({

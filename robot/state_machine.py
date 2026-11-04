@@ -10,7 +10,7 @@ from planning.navigation import Grid, Mission, Navigation, Position
 from planning.utils import GRID_SIZE
 from robot import utils
 from robot.control import Control
-from robot.obstacle import ObstacleGuard
+from robot.obstacle import ObstacleGuard, ObstacleState
 from robot.states import Mode, RobotState
 from robot.telemetry import FigureEightRequest, Order, TelemetryServer, make_status
 from vision.image_processor import ImageProcessor, LineDetection
@@ -32,12 +32,15 @@ def wait_for_mission(
     serial: Serial,
     telemetry: TelemetryServer,
     processor: ImageProcessor,
+    grid: Grid,
     last_mission: Optional[Mission] = None,
     line_lost: bool = False,
 ) -> Optional[Order]:
     """Moteurs coupés, diffuse la caméra jusqu'à un ordre de l'interface (None : fin du programme)."""
     obstacle = ObstacleGuard()
     while connection.step():
+        if telemetry.take_blocked_reset():
+            grid.clear_blocked()
         obstacle.update(serial.get_distance_cm())  # pour vérifier le capteur avant de démarrer
         frame = connection.get_frame()
         line_detected = is_intersection = False
@@ -46,7 +49,8 @@ def wait_for_mission(
             connection.publish_frame(processor.annotate(frame, detection))
             line_detected, is_intersection = detection.cx is not None, detection.is_intersection
         telemetry.publish(make_status(Mode.GRID, RobotState.IDLE, GRID_SIZE + 1, last_mission,
-                                      line_detected, is_intersection, line_lost, obstacle.status))
+                                      line_detected, is_intersection, line_lost, obstacle.status,
+                                      grid.blocked_edges))
         request = telemetry.take_mission()
         if request is not None:
             return request
@@ -63,8 +67,9 @@ def serve_missions(
     processor = processor or ImageProcessor()
     last_mission: Optional[Mission] = None
     line_lost = False
+    grid = Grid(GRID_SIZE)  # partagé entre les missions : un obstacle reste là d'une mission à l'autre
     while True:
-        request = wait_for_mission(connection, serial, telemetry, processor, last_mission, line_lost)
+        request = wait_for_mission(connection, serial, telemetry, processor, grid, last_mission, line_lost)
         if request is None:
             return
         try:
@@ -72,9 +77,15 @@ def serve_missions(
                 last_mission = None  # la livraison précédente ne doit plus être affichée
                 line_lost = run_figure_eight(connection, serial, processor, telemetry)
             else:
-                last_mission = run_state_machine(connection, serial, request.start, request.destination,
-                                                 request.heading, processor, telemetry)
-                line_lost = last_mission.line_lost
+                line_lost = False
+                try:
+                    last_mission = run_state_machine(connection, serial, request.start, request.destination,
+                                                     request.heading, processor, telemetry, grid)
+                    line_lost = last_mission.line_lost
+                except ValueError as exc:  # destination coupée par des arêtes bloquées
+                    print(exc)
+                    last_mission = Mission([request.start, request.destination], request.heading)
+                    last_mission.no_route = True
         finally:
             telemetry.mission_finished()
 
@@ -180,9 +191,13 @@ def run_state_machine(
     robot_dir: Direction,
     processor: Optional[ImageProcessor] = None,
     telemetry: Optional[TelemetryServer] = None,
+    grid: Optional[Grid] = None,
 ) -> Mission:
     """Va de `start_pos` à `end_pos`, y fait un tour complet (la livraison), puis fait demi-tour
     et revient, sauf arrêt demandé par l'interface.
+
+    Arrêté par un obstacle sur une ligne, le robot retire l'arête du graphe, revient à son dernier
+    nœud et repart par un nouveau chemin. La mission s'arrête s'il n'y en a aucun.
 
     Renvoie la mission (et ses flags).
     """
@@ -191,7 +206,7 @@ def run_state_machine(
     obstacle = ObstacleGuard()
     processor = processor or ImageProcessor()
 
-    grid = Grid(GRID_SIZE)
+    grid = grid or Grid(GRID_SIZE)
     nav = Navigation()
     path = nav.generate_path(grid, start_pos, end_pos, robot_dir)
     if not path:
@@ -209,13 +224,17 @@ def run_state_machine(
     approach_duration = utils.APPROACH_DURATION
     delivery_half_turns = 0
     state_after_delivery = RobotState.FOLLOWING
+    blocked_since: Optional[float] = None
+    # Retour à un nœud trop proche pour que la caméra le voie : durée d'avance à l'aveugle.
+    blind_return = 0.0
     # Empêche de détecter plusieurs fois la même intersection (dont celle de départ, si elle est visible)
     intersection_armed = False
 
     def publish(line_detected: bool = False, is_intersection: bool = False) -> None:
         if telemetry is not None:
             telemetry.publish(make_status(Mode.GRID, robot_state, grid.nb_nodes, mission,
-                                          line_detected, is_intersection, obstacle=obstacle.status))
+                                          line_detected, is_intersection, obstacle=obstacle.status,
+                                          blocked_edges=grid.blocked_edges))
 
     controller.set_speed_cap(obstacle.update(serial.get_distance_cm()))
     publish()
@@ -236,6 +255,45 @@ def run_state_machine(
             detection = processor.process_frame(frame)
             connection.publish_frame(processor.annotate(frame, detection))
             cx, is_intersection = detection.cx, detection.is_intersection
+
+            on_edge = robot_state in (RobotState.FOLLOWING, RobotState.APPROACHING_INTERSECTION)
+            if not on_edge or obstacle.status.state != ObstacleState.BLOCKED:
+                blocked_since = None
+            elif blocked_since is None:
+                blocked_since = current_time
+            elif current_time - blocked_since > utils.OBSTACLE_CONFIRM_SECONDS:
+                blocked_since = None
+                node, blocked_node = mission.position, mission.next_node
+                if blocked_node == node:  # déjà en retour vers ce nœud : obstacle des deux côtés
+                    print("Obstacle sur le retour au nœud : mission arrêtée.")
+                    mission.no_route = True
+                    break
+                grid.block_edge(node, blocked_node)
+                print(f"Arête bloquée : {node} - {blocked_node}")
+                moved = controller.travel > 0.0
+                path = nav.generate_path(grid, node, mission.target, robot_dir.opposite if moved else robot_dir)
+                if not path:
+                    print("Aucun chemin : mission arrêtée.")
+                    mission.no_route = True
+                    break
+                print("Nouveau chemin :", path)
+                nav.display_path(grid, path)
+                mission.reroute(path)
+                if moved:
+                    robot_dir = robot_dir.opposite
+                    mission.heading = robot_dir
+                    robot_state = RobotState.TURNING_180
+                    action_start_time = current_time
+                    # La caméra voit à la distance parcourue pendant l'approche, pas plus près.
+                    seen_from = utils.FORWARD_SPEED * utils.APPROACH_DURATION
+                    blind_return = controller.travel / utils.FORWARD_SPEED if controller.travel < seen_from else 0.0
+                    # Le nœud doit pouvoir être détecté sur le retour, sauf si on y retourne à l'aveugle :
+                    # il serait alors compté une seconde fois en le quittant.
+                    intersection_armed = blind_return == 0.0
+                else:
+                    robot_state = RobotState.STOP_ON_INTERSECTION  # n'a pas quitté le nœud
+                publish(cx is not None, is_intersection)
+                continue
 
             if robot_state == RobotState.FOLLOWING:
                 if line_watch.is_lost(controller.drive_time, cx is not None):
@@ -268,9 +326,19 @@ def run_state_machine(
                 if controller.stop(current_time):
                     was_at_destination = mission.destination_reached
                     next_dir = mission.on_intersection()
+                    controller.travel = 0.0
 
                     if mission.destination_reached and not was_at_destination:
                         print("Destination atteinte ! Demi-tour, retour au point de départ.")
+                        if mission.rerouted:
+                            # Refaire l'aller à l'envers repasserait par les détours : on recalcule.
+                            path = nav.generate_path(grid, mission.destination, mission.start, robot_dir)
+                            if not path:
+                                print("Aucun chemin de retour : mission arrêtée.")
+                                mission.no_route = True
+                                break
+                            mission.reroute(path)
+                            next_dir = mission.on_intersection()
 
                     if next_dir is None:
                         print("Retour au point de départ.")
@@ -310,6 +378,11 @@ def run_state_machine(
                 if controller.turn(current_time, False, action_start_time, half_turn=True):
                     print("Demi-tour terminé.")
                     robot_state = RobotState.FOLLOWING
+                    if blind_return > 0.0:
+                        robot_state = RobotState.APPROACHING_INTERSECTION
+                        approach_start = controller.drive_time
+                        approach_duration = blind_return
+                        blind_return = 0.0
 
             elif robot_state == RobotState.STOPPED:
                 controller.halt()

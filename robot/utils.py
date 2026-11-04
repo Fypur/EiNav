@@ -26,6 +26,7 @@ OBSTACLE_SLOWDOWN_CM = 60  # le robot commence à ralentir en dessous
 OBSTACLE_STOP_CM = 20  # arrêt complet
 OBSTACLE_RESUME_CM = 25  # une fois arrêté, le robot ne repart qu'à partir de cette distance
 OBSTACLE_FILTER_READINGS = 3  # nombre de mesures gardées, dont on retient la plus petite
+OBSTACLE_CONFIRM_SECONDS = 1.0  # arrêté depuis ce temps devant un obstacle : l'arête est retirée du graphe
 
 # Écart à la consigne en dessous duquel la vitesse est considérée comme atteinte
 # (une exponentielle n'atteint jamais sa consigne).

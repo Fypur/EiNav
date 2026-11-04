@@ -401,7 +401,7 @@ def test_approche_d_un_croisement_figee_pendant_le_blocage() -> None:
     """Le robot bloqué n'avance pas vers le centre : il finit l'approche une fois libéré."""
     class Blocking(Robot):
         def get_distance_cm(self) -> Optional[int]:
-            return 20 if 12 <= self.steps < 100 else 200
+            return 20 if 12 <= self.steps < 24 else 200  # moins que OBSTACLE_CONFIRM_SECONDS
 
     robot, recorder = Blocking(80.0, max_steps=140), Recorder()
     run_state_machine(robot, robot, (0, 0), (0, 2), Direction.SOUTH,  # type: ignore[arg-type]
