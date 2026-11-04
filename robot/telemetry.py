@@ -119,6 +119,7 @@ class RobotStatus:
     returned_home: bool
     line_detected: bool
     is_intersection: bool
+    line_lost: bool  # la dernière mission s'est arrêtée faute de voir la ligne
 
 
 def make_status(
@@ -128,6 +129,7 @@ def make_status(
     mission: Optional[Mission],
     line_detected: bool = False,
     is_intersection: bool = False,
+    line_lost: bool = False,
 ) -> RobotStatus:
     return RobotStatus(
         mode=mode.name,
@@ -143,6 +145,7 @@ def make_status(
         returned_home=mission.returned_home if mission else False,
         line_detected=line_detected,
         is_intersection=is_intersection,
+        line_lost=line_lost,
     )
 
 

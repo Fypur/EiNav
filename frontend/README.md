@@ -39,6 +39,8 @@ Pour suivre le parcours en 8 :
 2. poser le robot sur la ligne ;
 3. cliquer sur **Démarrer**. Le robot suit la ligne et traverse le croisement tout droit, sans s'arrêter, jusqu'au clic sur **Arrêter**.
 
+Dans les deux modes, si le robot en suivi de ligne ne voit plus aucune ligne pendant plus d'une seconde (`LINE_LOST_TIMEOUT` dans `robot/utils.py`), il s'arrête et l'interface affiche « Arrêt : ligne perdue ». Il repart seulement après un nouveau clic sur **Démarrer** : en livraison, il faut le reposer sur un croisement de départ.
+
 Depuis un navigateur sur le même réseau :
 
 | Adresse | Contenu |

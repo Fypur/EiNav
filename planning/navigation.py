@@ -240,6 +240,7 @@ class Mission:
         self.position: Position = path[0]  # dernier nœud atteint
         self.destination_reached = False  # levé à l'arrivée à destination
         self.returned_home = False  # levé au retour sur le point de départ
+        self.line_lost = False  # levé si la mission s'arrête faute de voir la ligne
         self._index = 0
 
     @property

@@ -31,6 +31,7 @@ def wait_for_mission(
     telemetry: TelemetryServer,
     processor: ImageProcessor,
     last_mission: Optional[Mission] = None,
+    line_lost: bool = False,
 ) -> Optional[Order]:
     """Moteurs coupés, diffuse la caméra jusqu'à un ordre de l'interface (None : fin du programme)."""
     while connection.step():
@@ -41,7 +42,7 @@ def wait_for_mission(
             connection.publish_frame(processor.annotate(frame, detection))
             line_detected, is_intersection = detection.cx is not None, detection.is_intersection
         telemetry.publish(make_status(Mode.GRID, RobotState.IDLE, GRID_SIZE + 1, last_mission,
-                                      line_detected, is_intersection))
+                                      line_detected, is_intersection, line_lost))
         request = telemetry.take_mission()
         if request is not None:
             return request
@@ -57,19 +58,40 @@ def serve_missions(
     """Exécute les ordres de l'interface, jusqu'à la fin du programme."""
     processor = processor or ImageProcessor()
     last_mission: Optional[Mission] = None
+    line_lost = False
     while True:
-        request = wait_for_mission(connection, telemetry, processor, last_mission)
+        request = wait_for_mission(connection, telemetry, processor, last_mission, line_lost)
         if request is None:
             return
         try:
             if isinstance(request, FigureEightRequest):
                 last_mission = None  # la livraison précédente ne doit plus être affichée
-                run_figure_eight(connection, serial, processor, telemetry)
+                line_lost = run_figure_eight(connection, serial, processor, telemetry)
             else:
                 last_mission = run_state_machine(connection, serial, request.start, request.destination,
                                                  request.heading, processor, telemetry)
+                line_lost = last_mission.line_lost
         finally:
             telemetry.mission_finished()
+
+
+class LineLossWatch:
+    """Signale, pendant le suivi, une ligne restée invisible plus de LINE_LOST_TIMEOUT sans interruption.
+
+    Le suivi ne se termine que sur une image où la ligne est vue : le compteur est donc
+    toujours à zéro à la reprise suivante, et un virage ou une traversée n'est jamais compté.
+    """
+
+    def __init__(self) -> None:
+        self._lost_since: Optional[float] = None
+
+    def is_lost(self, now: float, line_seen: bool) -> bool:
+        if line_seen:
+            self._lost_since = None
+            return False
+        if self._lost_since is None:
+            self._lost_since = now
+        return now - self._lost_since > utils.LINE_LOST_TIMEOUT
 
 
 def _steer(controller: Control, detection: LineDetection, now: float) -> None:
@@ -86,9 +108,13 @@ def run_figure_eight(
     serial: Serial,
     processor: ImageProcessor,
     telemetry: TelemetryServer,
-) -> None:
-    """Suit la ligne et traverse les croisements tout droit, jusqu'à l'arrêt demandé par l'interface."""
+) -> bool:
+    """Suit la ligne et traverse les croisements tout droit, jusqu'à l'arrêt demandé par l'interface.
+
+    Renvoie True si le robot s'est arrêté parce qu'il ne voyait plus la ligne.
+    """
     controller = Control(serial)
+    line_watch = LineLossWatch()
     robot_state = RobotState.FOLLOWING
     crossing_start = crossing_duration = 0.0
     # Le robot peut être posé sur le croisement : il ne compte qu'une fois quitté.
@@ -112,6 +138,10 @@ def run_figure_eight(
             connection.publish_frame(processor.annotate(frame, detection))
 
             if robot_state == RobotState.FOLLOWING:
+                if line_watch.is_lost(current_time, detection.cx is not None):
+                    print("Ligne perdue : arrêt du robot.")
+                    return True
+
                 if not detection.is_intersection:
                     intersection_armed = True
                 if detection.is_intersection and intersection_armed:
@@ -130,6 +160,7 @@ def run_figure_eight(
                                           detection.cx is not None, detection.is_intersection))
     finally:
         controller.halt()
+    return False
 
 
 def run_state_machine(
@@ -146,6 +177,7 @@ def run_state_machine(
     Renvoie la mission (et ses flags).
     """
     controller = Control(serial)
+    line_watch = LineLossWatch()
     processor = processor or ImageProcessor()
 
     grid = Grid(GRID_SIZE)
@@ -190,6 +222,11 @@ def run_state_machine(
             cx, is_intersection = detection.cx, detection.is_intersection
 
             if robot_state == RobotState.FOLLOWING:
+                if line_watch.is_lost(current_time, cx is not None):
+                    print("Ligne perdue : arrêt du robot.")
+                    mission.line_lost = True
+                    break
+
                 # Réarmement après avoir quitté complètement l'intersection
                 if not is_intersection:
                     intersection_armed = True

@@ -8,7 +8,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 from unittest import mock
 
 import numpy as np
@@ -369,6 +369,85 @@ def test_huit_ne_roule_pas_sans_image() -> None:
     assert all(c == (0.0, 0.0, 0.0, 0.0) for c in serial.commands)
 
 
+# --- Ligne perdue ----------------------------------------------------------------------------
+
+class LineScriptProcessor(FakeProcessor):
+    """Ligne vue seulement quand `visible(numéro d'image)` est vrai, à partir de l'image 1."""
+
+    def __init__(self, visible: Any) -> None:
+        super().__init__()
+        self.visible = visible
+
+    def process_frame(self, image_bgr: np.ndarray) -> LineDetection:
+        self.calls += 1
+        cx = 80 if self.visible(self.calls) else None
+        return LineDetection(cx, False, 160, 76, np.zeros((52, 160), np.uint8))
+
+
+def _grid_mission(visible: Any, heading: Direction = Direction.SOUTH, steps: int = 400) -> Tuple[Mission, FakeConnection,
+                                                                                                FakeSerial]:
+    connection, serial = FakeConnection(max_steps=steps), FakeSerial()
+    mission = run_state_machine(connection, serial, (0, 0), (0, 2), heading,  # type: ignore[arg-type]
+                                processor=LineScriptProcessor(visible))
+    return mission, connection, serial
+
+
+def test_ligne_perdue_plus_d_une_seconde_arrete_la_mission() -> None:
+    last_seen = 20
+    mission, connection, serial = _grid_mission(lambda i: i <= last_seen)
+    assert mission.line_lost and not mission.returned_home
+    assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
+    # Première image sans ligne : 21. L'arrêt arrive à 1 s, à une image près (l'horloge simulée
+    # additionne des flottants : l'image de la 20e période peut déjà dépasser 1 s d'un arrondi).
+    lost_for = (connection.steps - (last_seen + 1)) * connection.dt
+    assert robot_utils.LINE_LOST_TIMEOUT <= lost_for <= robot_utils.LINE_LOST_TIMEOUT + 2 * connection.dt
+
+
+def test_ligne_perdue_moins_d_une_seconde_ne_change_rien() -> None:
+    """0,9 s sans ligne (18 images à 0,05 s), puis la ligne revient."""
+    mission, connection, _ = _grid_mission(lambda i: not 20 < i <= 38, steps=200)
+    assert not mission.line_lost
+    assert connection.steps == 200, "le robot roule toujours"
+
+
+def test_pertes_breves_repetees_ne_s_additionnent_pas() -> None:
+    mission, _, _ = _grid_mission(lambda i: i % 15 == 0, steps=300)
+    assert not mission.line_lost, "une image avec la ligne toutes les 0,75 s suffit à continuer"
+
+
+def test_ligne_invisible_pendant_un_virage_n_arrete_pas() -> None:
+    """Demi-tour de 3 s au départ, sans voir la ligne : seul le suivi compte."""
+    mission, connection, _ = _grid_mission(lambda i: i > 70, heading=Direction.NORTH, steps=200)
+    assert not mission.line_lost
+    assert connection.steps == 200
+
+
+def test_compteur_demarre_a_l_entree_en_suivi() -> None:
+    recorder = Recorder()
+    connection = FakeConnection(max_steps=400)
+    mission = run_state_machine(connection, FakeSerial(), (0, 0), (0, 2), Direction.NORTH,  # type: ignore[arg-type]
+                                processor=LineScriptProcessor(lambda i: False), telemetry=recorder)  # type: ignore[arg-type]
+    assert mission.line_lost
+    following = sum(1 for s in recorder.statuses if s.state == RobotState.FOLLOWING.name)
+    assert robot_utils.LINE_LOST_TIMEOUT < following * connection.dt <= robot_utils.LINE_LOST_TIMEOUT + 3 * connection.dt
+
+
+def test_huit_s_arrete_si_la_ligne_est_perdue() -> None:
+    connection, serial = FakeConnection(max_steps=400), FakeSerial()
+    line_lost = run_figure_eight(connection, serial, LineScriptProcessor(lambda i: i <= 20),  # type: ignore[arg-type]
+                                 Recorder())  # type: ignore[arg-type]
+    assert line_lost is True
+    assert connection.steps < 60
+    assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_huit_continue_si_la_ligne_revient() -> None:
+    connection = FakeConnection(max_steps=100)
+    line_lost = run_figure_eight(connection, FakeSerial(), LineScriptProcessor(lambda i: not 20 < i <= 38),  # type: ignore[arg-type]
+                                 Recorder())  # type: ignore[arg-type]
+    assert line_lost is False
+
+
 # --- Vision ----------------------------------------------------------------------------------
 
 def _frame_with_cross() -> np.ndarray:
@@ -615,6 +694,45 @@ def test_livraison_precedente_oubliee_apres_un_huit(robot: tuple) -> None:
     wait_until(lambda: state_of(port)["state"] == "IDLE")
     state = state_of(port)
     assert state["start"] is None and not state["returned_home"] and state["route"] == []
+
+
+@pytest.mark.parametrize("order", [MISSION, {"mode": "HUIT"}])
+def test_ligne_perdue_signalee_a_l_interface_puis_effacee(order: dict) -> None:
+    visible = {"line": True}
+    server = TelemetryServer(port=0)
+    serial, connection = FakeSerial(), PacedConnection()
+    processor = LineScriptProcessor(lambda i: visible["line"])
+    thread = threading.Thread(target=serve_missions, args=(connection, serial, server, processor))
+    thread.start()
+    port = server._server.server_address[1]
+    try:
+        wait_until(lambda: connection.steps > 2)
+        assert state_of(port)["line_lost"] is False
+
+        assert post(port, "/mission", order)[0] == 200
+        wait_until(lambda: state_of(port)["state"] != "IDLE")
+        visible["line"] = False
+        wait_until(lambda: state_of(port)["state"] == "IDLE")
+        assert state_of(port)["line_lost"] is True
+        assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
+
+        # Le robot reste arrêté, même si la ligne revient, et une nouvelle mission efface l'alerte.
+        count = len(serial.commands)
+        visible["line"] = True
+        steps = connection.steps
+        wait_until(lambda: connection.steps > steps + 50)
+        assert len(serial.commands) == count
+        assert state_of(port)["line_lost"] is True
+
+        assert post(port, "/mission", order)[0] == 200
+        wait_until(lambda: state_of(port)["state"] != "IDLE")
+        assert state_of(port)["line_lost"] is False
+    finally:
+        server._request_stop()
+        connection.finished = True
+        thread.join(10)
+        server.close()
+    assert not thread.is_alive()
 
 
 # --- Point d'entrée --------------------------------------------------------------------------
