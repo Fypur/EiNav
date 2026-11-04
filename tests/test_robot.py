@@ -23,10 +23,17 @@ import EiNav  # noqa: E402
 from connections.base import RobotConnection  # noqa: E402
 from planning.direction import Direction  # noqa: E402
 from planning.navigation import Grid, Mission, Navigation  # noqa: E402
+from robot import utils as robot_utils  # noqa: E402
 from robot.control import Control  # noqa: E402
-from robot.state_machine import get_turn_state, run_state_machine, serve_missions  # noqa: E402
+from robot.state_machine import get_turn_state, run_figure_eight, run_state_machine, serve_missions  # noqa: E402
 from robot.states import Mode, RobotState  # noqa: E402
-from robot.telemetry import MissionRequest, TelemetryServer, make_status, parse_mission  # noqa: E402
+from robot.telemetry import (  # noqa: E402
+    FigureEightRequest,
+    MissionRequest,
+    TelemetryServer,
+    make_status,
+    parse_mission,
+)
 from vision.image_processor import ImageProcessor, LineDetection  # noqa: E402
 
 
@@ -84,11 +91,11 @@ def test_acceleration_et_deceleration_exponentielles() -> None:
     for i in range(40):
         control.aim(i * dt, 0.0)
     speeds = [c[0] for c in serial.commands]
-    assert speeds[1] < speeds[2] < control.base_speed
-    assert speeds[-1] == control.base_speed
+    assert speeds[1] < speeds[2] < robot_utils.BASE_SPEED
+    assert speeds[-1] == robot_utils.BASE_SPEED
     # Écart à la consigne divisé par un facteur constant : c'est une exponentielle.
-    ratios = [(control.base_speed - speeds[i + 1]) / (control.base_speed - speeds[i]) for i in range(1, 6)]
-    assert ratios == pytest.approx([np.exp(-dt / control.time_constant)] * 5)
+    ratios = [(robot_utils.BASE_SPEED - speeds[i + 1]) / (robot_utils.BASE_SPEED - speeds[i]) for i in range(1, 6)]
+    assert ratios == pytest.approx([np.exp(-dt / robot_utils.RAMP_TIME_CONSTANT)] * 5)
 
     t = 40 * dt
     stopped = False
@@ -108,7 +115,7 @@ def test_rotation_conserve_angle_malgre_les_rampes(quarters: int) -> None:
     while not control.turn(t, False, 0.0, quarter_turns=quarters):
         t += dt
     integral = sum(c[0] for c in serial.commands) * dt
-    assert integral == pytest.approx(control.turn_speed * control.turn_duration * quarters, rel=0.02)
+    assert integral == pytest.approx(robot_utils.TURN_SPEED * robot_utils.TURN_DURATION * quarters, rel=0.02)
     assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
 
 
@@ -137,14 +144,14 @@ def test_approche_compense_la_distance_de_rampe() -> None:
     while not control.stop(t):
         t += dt
     distance = sum(c[0] for c in serial.commands) * dt
-    assert distance == pytest.approx(control.forward_speed * 0.9, rel=0.1)
+    assert distance == pytest.approx(robot_utils.FORWARD_SPEED * 0.9, rel=0.1)
 
 
 def test_correction_de_direction_non_filtree() -> None:
     control, serial = _make_control()
     control.aim(0.0, 1.0)
     fl, fr, _, _ = serial.commands[-1]
-    assert fl - fr == pytest.approx(2 * control.kp)
+    assert fl - fr == pytest.approx(2 * robot_utils.KP)
 
 
 # --- Machine à états -------------------------------------------------------------------------
@@ -225,6 +232,65 @@ def test_aller_retour_complet() -> None:
     assert recorder.statuses[-1].returned_home
 
 
+class ScriptedProcessor(FakeProcessor):
+    """Intersection vue uniquement sur les images dont le numéro est donné (à partir de 1)."""
+
+    def __init__(self, seen_on: Tuple[int, ...] = ()) -> None:
+        super().__init__()
+        self.seen_on = seen_on
+
+    def process_frame(self, image_bgr: np.ndarray) -> LineDetection:
+        self.calls += 1
+        return LineDetection(80, self.calls in self.seen_on, 160, 76, np.zeros((52, 160), np.uint8))
+
+
+def _run_without_seeing_intersection(start: tuple, end: tuple, heading: Direction) -> Tuple[Recorder, FakeSerial]:
+    recorder, serial = Recorder(), FakeSerial()
+    run_state_machine(FakeConnection(max_steps=100), serial, start, end, heading,  # type: ignore[arg-type]
+                      processor=ScriptedProcessor(), telemetry=recorder)  # type: ignore[arg-type]
+    return recorder, serial
+
+
+def test_depart_sans_voir_le_premier_croisement() -> None:
+    """Posé sur le croisement, le robot ne peut pas le voir : il part sans l'attendre."""
+    recorder, serial = _run_without_seeing_intersection((0, 0), (0, 2), Direction.SOUTH)
+    assert recorder.statuses[0].position == (0, 0), "sur le point de départ dès le lancement"
+    states = [s.state for s in recorder.statuses]
+    assert RobotState.APPROACHING_INTERSECTION.name not in states
+    assert states[-1] == RobotState.FOLLOWING.name
+    assert recorder.statuses[-1].next_node == (0, 1), "le premier nœud est déjà compté"
+    assert any(c[0] > 0 and c[0] == c[1] for c in serial.commands), "le robot avance"
+
+
+def test_virage_sur_place_au_depart_si_mal_oriente() -> None:
+    recorder, _ = _run_without_seeing_intersection((0, 0), (0, 2), Direction.NORTH)
+    states = [s.state for s in recorder.statuses]
+    assert RobotState.TURNING_180.name in states
+    assert RobotState.APPROACHING_INTERSECTION.name not in states
+    assert recorder.statuses[-1].heading == Direction.SOUTH.name
+
+
+def test_chaque_croisement_compte_une_seule_fois() -> None:
+    """(0, 0) -> (0, 2) et retour : 4 croisements à voir, le départ n'étant vu qu'au retour."""
+    recorder = Recorder()
+    connection = FakeConnection()
+    mission = run_state_machine(connection, FakeSerial(), (0, 0), (0, 2), Direction.SOUTH,  # type: ignore[arg-type]
+                                processor=FakeProcessor(), telemetry=recorder)  # type: ignore[arg-type]
+    assert mission.returned_home and mission.position == (0, 0)
+    states = [s.state for s in recorder.statuses]
+    approaches = sum(1 for before, after in zip(states, states[1:])
+                     if after == RobotState.APPROACHING_INTERSECTION.name and before != after)
+    assert approaches == 4
+
+
+def test_croisement_vu_au_depart_ignore_jusqu_a_l_avoir_quitte() -> None:
+    """Si la caméra voit quand même le croisement de départ, il ne compte pas comme le suivant."""
+    recorder = Recorder()
+    run_state_machine(FakeConnection(max_steps=8), FakeSerial(), (0, 0), (0, 2), Direction.SOUTH,  # type: ignore[arg-type]
+                      processor=ScriptedProcessor(seen_on=(1, 2, 3, 4)), telemetry=recorder)  # type: ignore[arg-type]
+    assert RobotState.APPROACHING_INTERSECTION.name not in [s.state for s in recorder.statuses]
+
+
 def test_image_perdue_ne_fait_pas_planter() -> None:
     connection = FakeConnection(drop_first=5)
     mission = run_state_machine(connection, FakeSerial(), (0, 0), (0, 0), Direction.SOUTH,  # type: ignore[arg-type]
@@ -236,6 +302,46 @@ def test_chemin_impossible() -> None:
     with pytest.raises(ValueError):
         run_state_machine(FakeConnection(), FakeSerial(), (0, 0), (9, 9), Direction.SOUTH,  # type: ignore[arg-type]
                           processor=FakeProcessor())
+
+
+# --- Parcours en 8 ---------------------------------------------------------------------------
+
+def _run_figure_eight(seen_on: Tuple[int, ...] = (), steps: int = 200) -> Tuple[Recorder, FakeSerial]:
+    recorder, serial = Recorder(), FakeSerial()
+    run_figure_eight(FakeConnection(max_steps=steps), serial, ScriptedProcessor(seen_on),  # type: ignore[arg-type]
+                     recorder)  # type: ignore[arg-type]
+    return recorder, serial
+
+
+def test_huit_traverse_les_croisements_sans_s_arreter() -> None:
+    recorder, serial = _run_figure_eight(seen_on=(50, 51, 52, 120, 121, 122))
+    states = [s.state for s in recorder.statuses]
+    approaches = sum(1 for before, after in zip(states, states[1:])
+                     if after == RobotState.APPROACHING_INTERSECTION.name and before != after)
+    assert approaches == 2
+    assert set(states) == {RobotState.FOLLOWING.name, RobotState.APPROACHING_INTERSECTION.name}
+    assert states[-1] == RobotState.FOLLOWING.name, "reprend le suivi après le croisement"
+    assert all(c[0] > 0 for c in serial.commands[1:-1]), "ne s'arrête jamais à un croisement"
+    assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0), "moteurs coupés en fin de boucle"
+
+
+def test_huit_annonce_son_mode_sans_grille() -> None:
+    recorder, _ = _run_figure_eight()
+    status = recorder.statuses[0]
+    assert status.mode == Mode.HUIT.name
+    assert status.start is None and status.position is None and status.route == []
+
+
+def test_huit_ignore_le_croisement_sur_lequel_il_est_pose() -> None:
+    recorder, _ = _run_figure_eight(seen_on=(1, 2, 3, 4), steps=8)
+    assert RobotState.APPROACHING_INTERSECTION.name not in [s.state for s in recorder.statuses]
+
+
+def test_huit_ne_roule_pas_sans_image() -> None:
+    serial = FakeSerial()
+    run_figure_eight(FakeConnection(max_steps=5, drop_first=10), serial, ScriptedProcessor(),  # type: ignore[arg-type]
+                     Recorder())  # type: ignore[arg-type]
+    assert all(c == (0.0, 0.0, 0.0, 0.0) for c in serial.commands)
 
 
 # --- Vision ----------------------------------------------------------------------------------
@@ -283,7 +389,8 @@ def test_serveur_de_telemetrie() -> None:
         assert state["grid_nodes"] == 5
 
         with urllib.request.urlopen(base + "/") as response:
-            assert b"Mode livraison" in response.read()
+            page = response.read().decode("utf-8")
+        assert "Livraison sur la grille" in page and "Suivi de ligne en 8" in page
     finally:
         server.close()
 
@@ -316,7 +423,13 @@ MISSION = {"start": [0, 1], "destination": [1, 1], "heading": "SOUTH"}
 
 
 def test_parse_mission_valide() -> None:
-    assert parse_mission(json.dumps(MISSION).encode(), 5) == MissionRequest((0, 1), (1, 1), Direction.SOUTH)
+    expected = MissionRequest((0, 1), (1, 1), Direction.SOUTH)
+    assert parse_mission(json.dumps(MISSION).encode(), 5) == expected
+    assert parse_mission(json.dumps({**MISSION, "mode": "GRID"}).encode(), 5) == expected
+
+
+def test_parse_mission_huit_sans_point_de_depart() -> None:
+    assert parse_mission(b'{"mode": "HUIT"}', 5) == FigureEightRequest()
 
 
 @pytest.mark.parametrize("body", [
@@ -331,6 +444,9 @@ def test_parse_mission_valide() -> None:
     json.dumps({**MISSION, "destination": [0, 1]}).encode(),
     json.dumps({**MISSION, "heading": "HAUT"}).encode(),
     json.dumps({**MISSION, "heading": ["SOUTH"]}).encode(),
+    json.dumps({**MISSION, "mode": "TOUPIE"}).encode(),
+    json.dumps({**MISSION, "mode": ["HUIT"]}).encode(),
+    json.dumps({"mode": "GRID"}).encode(),
 ])
 def test_parse_mission_refuse_les_ordres_invalides(body: bytes) -> None:
     with pytest.raises(ValueError):
@@ -441,6 +557,39 @@ def test_arret_au_repos_n_annule_pas_la_mission_suivante(robot: tuple) -> None:
     assert post(port, "/stop", {})[0] == 200
     assert post(port, "/mission", MISSION)[0] == 200
     wait_until(lambda: state_of(port)["returned_home"])
+
+
+def test_huit_tourne_jusqu_a_l_arret_puis_livraison_possible(robot: tuple) -> None:
+    port, serial, connection, _ = robot
+    assert post(port, "/mission", {"mode": "HUIT"}) == (200, {"error": None})
+    wait_until(lambda: state_of(port)["mode"] == "HUIT")
+    wait_until(lambda: any(c != (0.0, 0.0, 0.0, 0.0) for c in serial.commands))
+
+    # FakeProcessor voit un croisement toutes les 40 images : le robot doit en passer plusieurs.
+    steps = connection.steps
+    wait_until(lambda: connection.steps > steps + 200)
+    assert state_of(port)["mode"] == "HUIT" and state_of(port)["state"] != "IDLE"
+    assert post(port, "/mission", MISSION)[0] == 409, "un seul ordre à la fois"
+
+    assert post(port, "/stop", {})[0] == 200
+    wait_until(lambda: state_of(port)["state"] == "IDLE")
+    assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
+
+    assert post(port, "/mission", MISSION)[0] == 200
+    wait_until(lambda: state_of(port)["returned_home"] and state_of(port)["state"] == "IDLE")
+
+
+def test_livraison_precedente_oubliee_apres_un_huit(robot: tuple) -> None:
+    port, _, _, _ = robot
+    assert post(port, "/mission", MISSION)[0] == 200
+    wait_until(lambda: state_of(port)["returned_home"] and state_of(port)["state"] == "IDLE")
+
+    assert post(port, "/mission", {"mode": "HUIT"})[0] == 200
+    wait_until(lambda: state_of(port)["mode"] == "HUIT")
+    assert post(port, "/stop", {})[0] == 200
+    wait_until(lambda: state_of(port)["state"] == "IDLE")
+    state = state_of(port)
+    assert state["start"] is None and not state["returned_home"] and state["route"] == []
 
 
 # --- Point d'entrée --------------------------------------------------------------------------

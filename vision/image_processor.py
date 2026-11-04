@@ -5,10 +5,7 @@ from typing import NamedTuple, Optional
 import cv2
 import numpy as np
 
-ROI_COLOR = (255, 200, 0)
-LINE_COLOR = (0, 200, 0)
-TARGET_COLOR = (0, 0, 255)
-INTERSECTION_COLOR = (0, 165, 255)
+from vision import utils
 
 
 class LineDetection(NamedTuple):
@@ -25,19 +22,19 @@ class ImageProcessor:
         h, w = image_bgr.shape[:2]
 
         # Définition de la Zone d'Intérêt (tiers inférieur)
-        roi_top = int(h * 0.6)
+        roi_top = int(h * utils.ROI_TOP_RATIO)
         roi = image_bgr[roi_top:h, 0:w]
         roi_h, roi_w = roi.shape[:2]
 
         # --- Etape 1 : Flou ---
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        blur_roi = cv2.GaussianBlur(gray_roi, (9, 9), 0)
+        blur_roi = cv2.GaussianBlur(gray_roi, utils.BLUR_KERNEL, 0)
 
         # --- Etape 2 : Seuil ---
-        _, thresh_roi = cv2.threshold(blur_roi, 140, 255, cv2.THRESH_BINARY)
+        _, thresh_roi = cv2.threshold(blur_roi, utils.BINARY_THRESHOLD, 255, cv2.THRESH_BINARY)
 
         # --- Etape 3 : Morphologie ---
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, utils.MORPH_KERNEL)
         morphed = cv2.morphologyEx(thresh_roi, cv2.MORPH_CLOSE, kernel)
         morphed = cv2.morphologyEx(morphed, cv2.MORPH_OPEN, kernel)
 
@@ -49,7 +46,7 @@ class ImageProcessor:
 
         if len(contours) > 0:
             max_contour = max(contours, key=cv2.contourArea)
-            if cv2.contourArea(max_contour) > 50:
+            if cv2.contourArea(max_contour) > utils.MIN_LINE_AREA:
                 touches_top = np.any(morphed[0, :] > 0)
                 touches_bottom = np.any(morphed[roi_h - 1, :] > 0)
                 touches_left = np.any(morphed[:, 0] > 0)
@@ -69,9 +66,9 @@ class ImageProcessor:
         annotated = image_bgr.copy()
         h, w = annotated.shape[:2]
         roi = annotated[detection.roi_top:h, 0:w]
-        roi[detection.mask > 0] = LINE_COLOR
+        roi[detection.mask > 0] = utils.LINE_COLOR
         cv2.rectangle(annotated, (0, detection.roi_top), (w - 1, h - 1),
-                      INTERSECTION_COLOR if detection.is_intersection else ROI_COLOR, 1)
+                      utils.INTERSECTION_COLOR if detection.is_intersection else utils.ROI_COLOR, 1)
         if detection.cx is not None:
-            cv2.line(annotated, (detection.cx, detection.roi_top), (detection.cx, h - 1), TARGET_COLOR, 1)
+            cv2.line(annotated, (detection.cx, detection.roi_top), (detection.cx, h - 1), utils.TARGET_COLOR, 1)
         return annotated

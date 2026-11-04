@@ -274,7 +274,7 @@ def test_picamera2_configuration(vflip: bool, expected: int, monkeypatch: pytest
     assert camera.kind == "picamera2"
     config = calls["config"]
     assert config["transform"] == {"vflip": expected}
-    assert config["buffer_count"] == 2
+    assert config["buffer_count"] == 1
     assert config["controls"] == {"FrameRate": 40, "FrameDurationLimits": (25000, 25000)}
     assert is_upright(camera.read())
     camera.close()

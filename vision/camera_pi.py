@@ -33,21 +33,27 @@ webcam OpenCV (pour tester sur PC).
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any, Optional, Tuple
 
 import cv2
 import numpy as np
 
-RESOLUTION = (160, 128)  # (largeur, hauteur), même taille que les images de data/images_2025
-MAX_FULL_FOV_FPS = 40    # cadence max des modes capteur plein champ (binning 2x2)
+if not __package__:  # lancé directement : python vision/camera_pi.py
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-STREAM_PORT = 8000       # doit correspondre à CAMERA_STREAM_PORT dans frontend/app.py
-STREAM_FPS = 15          # images/s max envoyées au navigateur (économise le CPU du Pi)
-JPEG_QUALITY = 80
-BOUNDARY = b"frame"
+from vision.utils import (  # noqa: E402
+    BOUNDARY,
+    JPEG_QUALITY,
+    MAX_FULL_FOV_FPS,
+    RESOLUTION,
+    STREAM_FPS,
+    STREAM_PORT,
+)
 
 _TEST_PAGE = b"""<!doctype html><html><head><meta charset="utf-8"><title>Camera robot</title>
 <style>html,body{margin:0;height:100%;background:#000;color:#cbd5e1;font-family:sans-serif}
@@ -235,7 +241,7 @@ class RobotCamera:
                     main={"size": resolution, "format": "RGB888"},  # RGB888 = octets BGR pour OpenCV
                     raw={"size": raw_size} if raw_size else None,
                     transform=libcamera.Transform(vflip=int(vflip)),
-                    buffer_count=2,  # moins d'images en file d'attente, donc moins de latence
+                    buffer_count=1,  # moins d'images en file d'attente, donc moins de latence
                     controls={"FrameRate": target_fps,
                               "FrameDurationLimits": (frame_duration_us, frame_duration_us)})
                 self._cam.configure(config)

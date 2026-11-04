@@ -1,10 +1,10 @@
 # Robot Control — Interface Streamlit V2
 
-Une interface web servie par le Raspberry Pi, utilisable depuis le navigateur de tout appareil sur le même réseau. L'onglet **Robot — Livraison** commande le robot réel et l'affiche en direct ; les autres onglets sont une **simulation** et n'envoient aucune commande au robot.
+Une interface web servie par le Raspberry Pi, utilisable depuis le navigateur de tout appareil sur le même réseau. L'onglet **Robot** commande le robot réel et l'affiche en direct ; les autres onglets sont une **simulation** et n'envoient aucune commande au robot.
 
 ## Fonctionnalités
 
-- **Robot — Livraison** : choix du départ, de l'arrivée et de l'orientation, boutons Démarrer et Arrêter, position sur la grille, état, flags « destination atteinte » et « retour au départ », image traitée. Cette page (`live.html`) est servie par le programme du robot ;
+- **Robot** : choix entre la livraison sur la grille et le suivi de ligne sur le parcours en 8, boutons Démarrer et Arrêter, état, image traitée. En livraison : choix du départ, de l'arrivée et de l'orientation, position sur la grille, flags « destination atteinte » et « retour au départ ». Cette page (`live.html`) est servie par le programme du robot ;
 - **Maillage cartésien de 16 points (grille 4 × 4)**, identifiants A–P, avec axes X/Y, coordonnées initiales de 0 à 3, départ M = (0, 0) ;
 - choix de destination en cliquant un point ou depuis une liste ; chemin le plus court calculé et visualisé en bleu (NetworkX) ;
 - commandes **Préparer le trajet**, **Retour au départ**, **Avancer d'un point** et **STOP** : simulation uniquement ;
@@ -30,15 +30,21 @@ python EiNav.py
 Pour faire une livraison :
 
 1. choisir le départ, l'arrivée et l'orientation ;
-2. poser le robot sur la ligne, juste avant le point de départ, dans l'orientation choisie ;
+2. poser le robot sur le croisement de départ, dans l'orientation choisie (la caméra ne voit pas ce croisement : le robot s'y considère déjà arrivé) ;
 3. cliquer sur **Démarrer**. Le robot va à l'arrivée, fait demi-tour, revient au départ et attend l'ordre suivant.
+
+Pour suivre le parcours en 8 :
+
+1. choisir **Suivi de ligne en 8** ;
+2. poser le robot sur la ligne ;
+3. cliquer sur **Démarrer**. Le robot suit la ligne et traverse le croisement tout droit, sans s'arrêter, jusqu'au clic sur **Arrêter**.
 
 Depuis un navigateur sur le même réseau :
 
 | Adresse | Contenu |
 | --- | --- |
 | `http://IP_DU_PI:8501` | Interface Streamlit complète |
-| `http://IP_DU_PI:8001` | Mode livraison, grille en direct et image traitée, sans Streamlit |
+| `http://IP_DU_PI:8001` | Commande du robot (livraison ou parcours en 8) et image traitée, sans Streamlit |
 | `http://IP_DU_PI:8000` | Image traitée seule |
 
 La page du port 8001 ne dépend que de Python : elle fonctionne même si Streamlit n'est pas installé. Le point d'accès mobile doit permettre la communication locale entre les appareils.
@@ -50,12 +56,21 @@ Pour travailler sur l'interface sans robot : `cd frontend && streamlit run app.p
 | Fichier | Usage |
 | --- | --- |
 | `app.py` | Interface Streamlit et visualisations Plotly |
-| `live.html` | Mode livraison, grille en direct et image traitée, servie par `robot/telemetry.py` |
+| `live.html` | Commande du robot (livraison ou parcours en 8) et image traitée, servie par `robot/telemetry.py` |
 | `navigation.py` | Validation du maillage et recherche de chemin |
 | `carte.json` | Grille de 16 points et 24 arêtes par défaut |
 | `ligne.py` | Validation, interpolation et positionnement sur une ligne courbe |
 | `ligne_blanche.json` | Points X/Y du tracé blanc et paramètre de lissage |
+| `utils.py` | Constantes de l'interface |
 | `requirements.txt` | Bibliothèques nécessaires |
+
+## Réglages du robot
+
+Les valeurs par défaut sont dans le fichier `utils.py` de chaque dossier (`robot/`, `vision/`, `planning/`, `connections/`, `frontend/`).
+
+Les plus utiles se changent dans le panneau **Réglages** de l'onglet **Robot** : vitesses, kp, durée d'approche, virages, seuil de blanc. Un changement s'applique aussitôt, même en mission, et il est conservé dans `settings.json`, sur le Pi et hors de git.
+
+Une valeur modifiée depuis l'interface prend le pas sur `utils.py`. Le bouton ↺ à côté d'un réglage le remet à la valeur de `utils.py`. Pour ajouter un réglage, compléter la liste `SETTINGS` de `robot/tuning.py`.
 
 ## Comprendre les deux modes
 

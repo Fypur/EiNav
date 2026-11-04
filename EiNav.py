@@ -8,6 +8,7 @@ from typing import Tuple
 
 from connections.base import RobotConnection
 from connections.serialpi import Serial
+from robot import tuning
 from robot.state_machine import serve_missions
 from robot.telemetry import open_interface, start_dashboard, start_telemetry
 
@@ -28,6 +29,7 @@ def create_environment(simulation: bool) -> Tuple[RobotConnection, Serial]:
 
 
 def main() -> None:
+    tuning.load()
     telemetry = start_telemetry()
     if telemetry is None:
         # Le robot ne reçoit ses ordres que par cette interface : inutile de continuer sans elle.

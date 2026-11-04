@@ -196,3 +196,7 @@ cython_debug/
 build
 install
 log
+
+# Réglages modifiés depuis l'interface web (propres à chaque robot)
+/settings.json
+/settings.tmp

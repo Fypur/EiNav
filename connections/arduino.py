@@ -9,13 +9,14 @@ from typing import Tuple
 
 import serial
 
+from connections import utils
 from connections.utilitaries import WaitACK, retrCmdi, sendCmdi
 
 
 class Arduino:
 
     def __init__(self, portnr: str) -> None:
-        self.serialport = serial.Serial(port=portnr, baudrate=115200, timeout=0.1)
+        self.serialport = serial.Serial(port=portnr, baudrate=utils.BAUD_RATE, timeout=utils.SERIAL_TIMEOUT)
 
     #   connection to Arduino
     def connect(self) -> bool:
@@ -26,7 +27,7 @@ class Arduino:
             rep = self.serialport.readline()
         print("Connecting to Arduino")
 
-        time.sleep(2)  # waiting for 2s for the Arduino to be initialised
+        time.sleep(utils.ARDUINO_BOOT_DELAY)  # waiting for the Arduino to be initialised
 
         self.serialport.write(b'A22')  # requesting connection with simple 'OK' acknowledgement
         rep = self.serialport.readline()

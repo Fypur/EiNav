@@ -8,19 +8,40 @@
   :root { --bg:#101B2D; --panel:#16233A; --line:#33465F; --text:#E2E8F0; --muted:#9EB0C6;
           --route:#38BDF8; --robot:#10B981; --goal:#F59E0B; --off:#EF4444; }
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   html, body { margin:0; background:var(--bg); color:var(--text);
                font:15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px; padding:12px; }
-  section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; min-width:0; }
+  main { display:grid; grid-template-columns:minmax(0, 1fr); gap:12px; padding:12px; }
+  @media (min-width:640px) {
+    main { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+    main.line-mode #camera { grid-column:span 2; }  /* sans grille, l'image prend sa place */
+  }
+  /* Écran large : réglages à côté de la grille et de l'image, pour voir l'effet d'un changement. */
+  @media (min-width:1100px) {
+    main { grid-template-columns:repeat(2, minmax(0, 1fr)) minmax(0, 2fr); align-items:start; }
+    #tuning { grid-column:3 !important; grid-row:2 / span 2; }
+  }
+  section, #tuning { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; min-width:0; }
   h2 { margin:0 0 8px; font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
   svg { display:block; width:100%; max-height:62vh; }
   iframe { display:block; width:100%; aspect-ratio:5/4; border:0; border-radius:8px; background:#000; }
-  #bar { display:flex; flex-wrap:wrap; gap:6px; padding:12px 12px 0; }
+  /* Toujours à l'écran : on règle le robot pendant qu'il roule, il faut pouvoir l'arrêter. */
+  #bar { position:sticky; top:0; z-index:1; display:flex; align-items:center; gap:10px; padding:8px 12px;
+         background:var(--bg); border-bottom:1px solid var(--line); }
+  #chips { display:flex; flex-wrap:wrap; gap:6px; flex:1; min-width:0; }
+  @media (max-width:639px) { #chips { flex-wrap:nowrap; overflow-x:auto; } .chip { white-space:nowrap; } }
   .chip { padding:3px 10px; border-radius:999px; border:1px solid var(--line); color:var(--muted); font-size:.85rem; }
   .chip.on { color:#06281E; background:var(--robot); border-color:var(--robot); font-weight:600; }
   .chip.off { color:#fff; background:var(--off); border-color:var(--off); font-weight:600; }
   .legend { margin:8px 0 0; color:var(--muted); font-size:.85rem; }
   #delivery { grid-column:1 / -1; }
+  #modes { display:inline-flex; flex-wrap:wrap; margin-bottom:12px; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  #modes label { flex-direction:row; cursor:pointer; }
+  #modes input { position:absolute; opacity:0; }
+  #modes span { padding:9px 16px; font-size:.95rem; color:var(--text); background:var(--bg); }
+  #modes input:checked + span { background:var(--route); color:#06281E; font-weight:600; }
+  #modes input:focus-visible + span { outline:2px solid var(--text); outline-offset:-2px; }
+  #modes input:disabled + span { opacity:.6; cursor:not-allowed; }
   #form { display:flex; flex-wrap:wrap; gap:10px 14px; align-items:flex-end; }
   label { display:flex; flex-direction:column; gap:4px; font-size:.85rem; color:var(--muted); }
   select, button { font:inherit; min-height:40px; border-radius:8px; border:1px solid var(--line);
@@ -31,24 +52,51 @@
   #halt:not(:disabled) { background:var(--off); border-color:var(--off); color:#fff; }
   #error { margin:8px 0 0; color:#FCA5A5; min-height:1.4em; }
   svg.picking { cursor:pointer; }
+  #tuning { grid-column:1 / -1; padding:0; }
+  #tuning > summary { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; padding:12px; cursor:pointer;
+                      font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  #modified { letter-spacing:0; text-transform:none; color:var(--goal); }
+  #saved { letter-spacing:0; text-transform:none; color:var(--robot); margin-left:auto; }
+  #tuning-body { padding:0 12px 12px; }
+  #groups { display:grid; grid-template-columns:repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap:14px 20px; }
+  .group h3 { margin:0 0 6px; font-size:.9rem; color:var(--text); }
+  .setting { padding:7px 0; border-top:1px solid var(--line); }
+  .setting-name { display:flex; align-items:baseline; gap:6px; font-size:.9rem; }
+  .setting.changed .setting-name > span { color:var(--goal); }
+  .setting-help { margin:2px 0 4px; font-size:.78rem; color:var(--muted); }
+  .setting-input { display:flex; align-items:center; gap:8px; }
+  .setting-input input[type=range] { flex:1; min-width:0; min-height:32px; accent-color:var(--route); }
+  .setting-input input[type=number] { width:76px; min-height:36px; font:inherit; border-radius:8px; padding:4px 6px;
+                                      border:1px solid var(--line); background:var(--bg); color:var(--text); }
+  .undo { min-height:36px; padding:0 9px; font-weight:400; }
+  .undo[hidden] { display:none; }
+  #tuning-footer { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; margin-top:10px; }
+  #tuning-error { margin:0; color:#FCA5A5; }
 </style>
 </head>
 <body>
 <div id="bar">
-  <span class="chip" id="link">Connexion…</span>
-  <span class="chip" id="state">–</span>
-  <span class="chip" id="position">–</span>
-  <span class="chip" id="line">Ligne</span>
-  <span class="chip" id="reached">Destination atteinte</span>
-  <span class="chip" id="home">Retour au départ</span>
+  <div id="chips">
+    <span class="chip" id="link">Connexion…</span>
+    <span class="chip" id="state">–</span>
+    <span class="chip" id="position" data-only="grid">–</span>
+    <span class="chip" id="line">Ligne</span>
+    <span class="chip" id="reached" data-only="grid">Destination atteinte</span>
+    <span class="chip" id="home" data-only="grid">Retour au départ</span>
+  </div>
+  <button id="halt" type="button" disabled>Arrêter</button>
 </div>
-<main>
+<main id="layout">
   <section id="delivery">
-    <h2>Mode livraison</h2>
+    <h2>Mode du robot</h2>
+    <div id="modes" role="radiogroup" aria-label="Mode du robot">
+      <label><input type="radio" name="mode" value="GRID" checked><span>Livraison sur la grille</span></label>
+      <label><input type="radio" name="mode" value="HUIT"><span>Suivi de ligne en 8</span></label>
+    </div>
     <div id="form">
-      <label for="start">Point de départ<select id="start"></select></label>
-      <label for="destination">Point d'arrivée<select id="destination"></select></label>
-      <label for="heading">Orientation au départ
+      <label for="start" data-only="grid">Point de départ<select id="start"></select></label>
+      <label for="destination" data-only="grid">Point d'arrivée<select id="destination"></select></label>
+      <label for="heading" data-only="grid">Orientation au départ
         <select id="heading">
           <option value="SOUTH">Sud (vers le bas)</option>
           <option value="NORTH">Nord (vers le haut)</option>
@@ -57,26 +105,38 @@
         </select>
       </label>
       <button id="go" type="button" disabled>Démarrer</button>
-      <button id="halt" type="button" disabled>Arrêter</button>
     </div>
-    <p class="legend">Touche la grille pour choisir le départ, puis l'arrivée. Pose le robot sur la ligne,
-      juste avant le point de départ, dans l'orientation choisie : il démarre dès le clic.</p>
+    <p class="legend" data-only="grid">Touche la grille pour choisir le départ, puis l'arrivée. Pose le robot sur le croisement
+      de départ, dans l'orientation choisie : il démarre dès le clic.</p>
+    <p class="legend" data-only="line">Pose le robot sur la ligne du 8 : il démarre dès le clic et roule
+      jusqu'au clic sur Arrêter, en traversant le croisement tout droit.</p>
     <p id="error" role="alert"></p>
   </section>
-  <section>
+  <section data-only="grid">
     <h2>Position sur la grille</h2>
     <svg id="grid" role="img" aria-label="Position du robot sur la grille"></svg>
     <p class="legend">D : départ. A : arrivée. La flèche est sur la dernière intersection atteinte,
       le trait bleu est l'étape en cours.</p>
   </section>
-  <section>
+  <section id="camera">
     <h2>Image traitée</h2>
     <iframe id="video" title="Image traitée par le robot"></iframe>
     <p class="legend">Vert : ligne détectée. Rouge : centre visé. Cadre orange : intersection.</p>
   </section>
+  <details id="tuning">
+    <summary>Réglages <span id="modified"></span><span id="saved" role="status"></span></summary>
+    <div id="tuning-body">
+      <div id="groups"></div>
+      <div id="tuning-footer">
+        <button id="reset-all" type="button" disabled>Tout réinitialiser</button>
+        <p class="legend">Appliqué aussitôt, même en mission, et conservé au redémarrage.</p>
+        <p id="tuning-error" role="alert"></p>
+      </div>
+    </div>
+  </details>
 </main>
 <script>
-  const STREAM_PORT = 8000;      // STREAM_PORT dans vision/camera_pi.py
+  const STREAM_PORT = 8000;      // STREAM_PORT dans vision/utils.py
   const POLL_MS = 300;
   const STEP = 60, MARGIN = 40;
   const ANGLE = { NORTH: 0, EAST: 90, SOUTH: 180, WEST: 270 };
@@ -146,13 +206,10 @@
     if (start) marker(start, "#CBD5E1", "D");
     if (destination) marker(destination, "#F59E0B", "A");
 
-    // Avant le premier arrêt, le robot n'a pas encore atteint le point de départ.
-    const robot = status.position || (running ? status.start : null);
-    if (!robot) return;
-    const [rx, ry] = robot;
+    if (!status.position) return;
+    const [rx, ry] = status.position;
     el("polygon", {
       points: "0,-20 14,14 0,6 -14,14", fill: "#10B981", stroke: "#D1FAE5", "stroke-width": 2,
-      opacity: status.position ? 1 : 0.55,
       transform: `translate(${px(rx)} ${px(ry)}) rotate(${ANGLE[status.heading] || 0})`,
     });
   }
@@ -169,18 +226,29 @@
     }
   }
 
+  const modeInputs = document.querySelectorAll('input[name="mode"]');
+  const selectedMode = () => document.querySelector('input[name="mode"]:checked').value;
+
   function refreshControls() {
     const online = latest !== null;
     const running = online && latest.state !== "IDLE";
+    // En mission, la page montre le mode du robot, même s'il a été lancé depuis un autre appareil.
+    if (running) for (const input of modeInputs) input.checked = input.value === latest.mode;
+    const lineMode = selectedMode() === "HUIT";
+    $("layout").classList.toggle("line-mode", lineMode);
+    for (const node of document.querySelectorAll("[data-only]")) {
+      node.hidden = node.dataset.only !== (lineMode ? "line" : "grid");
+    }
+    for (const input of modeInputs) input.disabled = !online || running;
     for (const id of ["start", "destination", "heading"]) $(id).disabled = !online || running;
     const chosen = $("start").value && $("destination").value;
-    const same = chosen && $("start").value === $("destination").value;
-    $("go").disabled = !online || running || sending || !chosen || same;
+    const same = !lineMode && chosen && $("start").value === $("destination").value;
+    $("go").disabled = !online || running || sending || (!lineMode && (!chosen || same));
     $("halt").disabled = !running;
     if (!sending && same) $("error").textContent = "Le départ et l'arrivée doivent être différents.";
     else if (!sending && $("error").dataset.same) $("error").textContent = "";
     $("error").dataset.same = same ? "1" : "";
-    if (online) drawGrid(latest);
+    if (online && !lineMode) drawGrid(latest);
   }
 
   async function post(path, payload) {
@@ -208,12 +276,20 @@
 
   $("go").addEventListener("click", () => {
     $("go").disabled = true;   // le robot passe en mission au prochain état reçu
-    command("mission", {
+    command("mission", selectedMode() === "HUIT" ? { mode: "HUIT" } : {
+      mode: "GRID",
       start: parseNode($("start").value),
       destination: parseNode($("destination").value),
       heading: $("heading").value,
     });
   });
+  for (const input of modeInputs) {
+    input.addEventListener("change", () => {
+      remember("einav-mode", selectedMode());
+      $("error").textContent = "";
+      refreshControls();
+    });
+  }
   $("halt").addEventListener("click", () => command("stop", {}));
   for (const id of ["start", "destination"]) $(id).addEventListener("change", refreshControls);
 
@@ -247,11 +323,11 @@
         const s = await response.json();
         latest = s;
         fillNodes(s.grid_nodes);
+        if (!settingsLoaded) loadSettings().catch(() => {});
         refreshControls();
         chip("link", "En direct", "on");
         chip("state", STATE_LABEL[s.state] || s.state, "");
-        chip("position", s.position ? `Nœud (${s.position[0]}, ${s.position[1]})`
-                                    : s.start ? "Avant le départ" : "Aucune mission", "");
+        chip("position", s.position ? `Nœud (${s.position[0]}, ${s.position[1]})` : "Aucune mission", "");
         if (s.state === "IDLE" && s.start && !s.returned_home) chip("state", "Mission arrêtée", "off");
         chip("line", s.line_detected ? "Ligne détectée" : "Ligne non détectée", s.line_detected ? "on" : "");
         chip("reached", null, s.destination_reached ? "on" : "");
@@ -259,11 +335,165 @@
       }
     } catch (error) {
       latest = null;
+      settingsLoaded = false;
       refreshControls();
       chip("link", "Robot hors ligne", "off");
     }
     setTimeout(poll, POLL_MS);
   }
+
+  // --- Réglages ------------------------------------------------------------------------------
+  const SEND_DELAY_MS = 200;
+  const inputs = {};            // clé -> éléments de la ligne du réglage
+  const pending = {};           // valeurs pas encore envoyées au robot
+  let settingsLoaded = false;
+  let sendTimer = null;
+  let savedTimer = null;
+  let resetArmed = null;
+
+  const remember = (name, value) => { try { localStorage.setItem(name, value); } catch (e) {} };
+  const recall = (name) => { try { return localStorage.getItem(name); } catch (e) { return null; } };
+  const decimals = (step) => (String(step).split(".")[1] || "").length;
+
+  function buildSettings(list) {
+    const groups = {};
+    for (const s of list) {
+      if (!groups[s.group]) {
+        groups[s.group] = document.createElement("div");
+        groups[s.group].className = "group";
+        groups[s.group].appendChild(document.createElement("h3")).textContent = s.group;
+        $("groups").appendChild(groups[s.group]);
+      }
+      const row = groups[s.group].appendChild(document.createElement("div"));
+      row.className = "setting";
+
+      const name = row.appendChild(document.createElement("label"));
+      name.className = "setting-name";
+      name.style.flexDirection = "row";
+      name.htmlFor = `set-${s.key}`;
+      name.appendChild(document.createElement("span")).textContent = s.label;
+      name.appendChild(document.createElement("small")).textContent = s.unit;
+      row.appendChild(document.createElement("p")).textContent = s.help;
+      row.lastChild.className = "setting-help";
+
+      const line = row.appendChild(document.createElement("div"));
+      line.className = "setting-input";
+      const slider = line.appendChild(document.createElement("input"));
+      const number = line.appendChild(document.createElement("input"));
+      slider.type = "range";
+      slider.setAttribute("aria-label", s.label);
+      number.type = "number";
+      number.id = `set-${s.key}`;
+      for (const input of [slider, number]) {
+        input.min = s.min;
+        input.max = s.max;
+        input.step = s.step;
+      }
+      const undo = line.appendChild(document.createElement("button"));
+      undo.type = "button";
+      undo.className = "undo";
+      undo.textContent = "↺";
+      undo.setAttribute("aria-label", `Remettre ${s.label} à sa valeur par défaut`);
+
+      slider.addEventListener("input", () => {
+        number.value = Number(slider.value).toFixed(decimals(s.step));
+        queueSetting(s.key, Number(slider.value));
+      });
+      number.addEventListener("change", () => {
+        const value = Number(number.value);
+        if (number.value === "" || !Number.isFinite(value)) { renderSettings(); return; }
+        const clamped = Math.min(s.max, Math.max(s.min, value));
+        number.value = clamped;   // avec Entrée le champ garde le focus : renderSettings ne le corrigerait pas
+        queueSetting(s.key, clamped);
+      });
+      undo.addEventListener("click", () => sendSettings("settings/reset", { keys: [s.key] }));
+      inputs[s.key] = { row, slider, number, undo };
+    }
+  }
+
+  function renderSettings() {
+    let modified = 0;
+    for (const s of settings) {
+      const { row, slider, number, undo } = inputs[s.key];
+      const changed = s.value !== s.default;
+      modified += changed ? 1 : 0;
+      row.classList.toggle("changed", changed);
+      undo.hidden = !changed;
+      undo.title = `Valeur par défaut : ${s.default}`;
+      if (s.key in pending) continue;   // ne pas écraser ce que l'utilisateur est en train de saisir
+      slider.value = s.value;
+      if (document.activeElement !== number) number.value = Number(s.value).toFixed(decimals(s.step));
+    }
+    $("modified").textContent = modified ? `${modified} modifié${modified > 1 ? "s" : ""}` : "";
+    $("reset-all").disabled = modified === 0;
+  }
+
+  let settings = [];
+
+  function showSaved() {
+    $("saved").textContent = "Enregistré";
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(() => { $("saved").textContent = ""; }, 1500);
+  }
+
+  async function sendSettings(path, payload) {
+    $("tuning-error").textContent = "";
+    try {
+      const response = await fetch(path, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `Erreur ${response.status}`);
+      settings = body.settings;
+      showSaved();
+    } catch (error) {
+      $("tuning-error").textContent = error.message === "Failed to fetch" ? "Robot injoignable." : error.message;
+    }
+    renderSettings();
+  }
+
+  function queueSetting(key, value) {
+    pending[key] = value;
+    clearTimeout(sendTimer);
+    sendTimer = setTimeout(() => {
+      const values = { ...pending };
+      for (const name in pending) delete pending[name];
+      sendSettings("settings", { values });
+    }, SEND_DELAY_MS);
+  }
+
+  async function loadSettings() {
+    const response = await fetch("settings", { cache: "no-store" });
+    if (!response.ok) return;
+    settings = (await response.json()).settings;
+    if (!Object.keys(inputs).length) buildSettings(settings);
+    settingsLoaded = true;
+    renderSettings();
+  }
+
+  // Deux clics : un geste malheureux ne doit pas effacer des réglages trouvés à la main.
+  $("reset-all").addEventListener("click", () => {
+    if (resetArmed === null) {
+      $("reset-all").textContent = "Confirmer ?";
+      resetArmed = setTimeout(() => {
+        resetArmed = null;
+        $("reset-all").textContent = "Tout réinitialiser";
+      }, 3000);
+      return;
+    }
+    clearTimeout(resetArmed);
+    resetArmed = null;
+    $("reset-all").textContent = "Tout réinitialiser";
+    sendSettings("settings/reset", {});
+  });
+
+  for (const input of modeInputs) if (input.value === recall("einav-mode")) input.checked = true;
+  refreshControls();
+
+  $("tuning").open = recall("einav-tuning-open") === "1";
+  $("tuning").addEventListener("toggle", () => remember("einav-tuning-open", $("tuning").open ? "1" : "0"));
+  window.addEventListener("focus", () => { if (settingsLoaded) loadSettings().catch(() => {}); });
+
   poll();
 </script>
 </body>

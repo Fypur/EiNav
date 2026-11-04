@@ -1,6 +1,6 @@
 """Tableau de bord Streamlit.
 
-L'onglet « Robot » commande le robot réel (mode livraison) et l'affiche en direct.
+L'onglet « Robot » commande le robot réel (livraison ou parcours en 8) et l'affiche en direct.
 Les autres onglets sont une simulation graphique : ils n'envoient aucune commande au robot.
 """
 
@@ -9,7 +9,6 @@ from __future__ import annotations
 import html
 import json
 from datetime import datetime
-from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -17,15 +16,15 @@ import streamlit as st
 
 from ligne import line_length, position_at, read_line, sample_line, save_line, validate_line
 from navigation import path_distance, read_map, save_map, shortest_path, validate_map
-
-
-BASE_DIR = Path(__file__).resolve().parent
-MAP_FILE = BASE_DIR / "carte.json"
-LINE_FILE = BASE_DIR / "ligne_blanche.json"
-MODE_NAV = "Navigation sur le maillage"
-MODE_LINE = "Suivi de ligne blanche"
-CAMERA_STREAM_PORT = 8000  # doit correspondre à STREAM_PORT dans vision/camera_pi.py
-TELEMETRY_PORT = 8001  # doit correspondre à TELEMETRY_PORT dans robot/telemetry.py
+from utils import (
+    CAMERA_STREAM_PORT,
+    LINE_FILE,
+    LIVE_PAGE_HEIGHT,
+    MAP_FILE,
+    MODE_LINE,
+    MODE_NAV,
+    TELEMETRY_PORT,
+)
 
 st.set_page_config(
     page_title="Robot | Poste de pilotage",
@@ -303,7 +302,7 @@ with st.sidebar:
             "Flux MJPEG diffusé par camera_pi.py. Si l'image reste vide, vérifier que le "
             "programme du robot tourne et que l'adresse est celle du Raspberry Pi."
         )
-    st.caption("Seul l'onglet « Robot — Livraison » agit sur le robot réel.")
+    st.caption("Seul l'onglet « Robot » agit sur le robot réel : ce choix de mode ne concerne que la simulation.")
     st.divider()
     st.subheader("Réseau")
     st.write(f"**Robot :** {robot_host()}")
@@ -331,13 +330,13 @@ st.markdown(
 )
 
 live_tab, nav_tab, edit_tab, line_tab, log_tab = st.tabs([
-    "🚚 Robot — Livraison", "🗺️ Pilotage (simulation)", "🧩 Édition du maillage",
+    "🤖 Robot", "🗺️ Pilotage (simulation)", "🧩 Édition du maillage",
     "〰️ Édition de la ligne", "📋 Journal",
 ])
 
 with live_tab:
     # Page servie par le programme du robot : elle reste à jour sans relancer Streamlit.
-    st.iframe(f"http://{robot_host()}:{TELEMETRY_PORT}/", height=1000)
+    st.iframe(f"http://{robot_host()}:{TELEMETRY_PORT}/", height=LIVE_PAGE_HEIGHT)
     st.caption("Si la page reste vide, vérifier que le programme du robot (EiNav.py) tourne.")
 
 with nav_tab:

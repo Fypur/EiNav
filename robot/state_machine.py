@@ -1,4 +1,4 @@
-"""Machine à états du robot : attente d'un ordre, suivi de ligne et navigation sur la grille."""
+"""Machine à états du robot : attente d'un ordre, livraison sur la grille et parcours en 8."""
 from __future__ import annotations
 
 from typing import Optional
@@ -6,13 +6,13 @@ from typing import Optional
 from connections.base import RobotConnection
 from connections.serialpi import Serial
 from planning.direction import Direction
-from planning.navigation import GRID_SIZE, Grid, Mission, Navigation, Position
+from planning.navigation import Grid, Mission, Navigation, Position
+from planning.utils import GRID_SIZE
+from robot import utils
 from robot.control import Control
 from robot.states import Mode, RobotState
-from robot.telemetry import MissionRequest, TelemetryServer, make_status
-from vision.image_processor import ImageProcessor
-
-APPROACH_DURATION = 0.9  # durée d'avance vers le centre, à vitesse d'avance constante
+from robot.telemetry import FigureEightRequest, Order, TelemetryServer, make_status
+from vision.image_processor import ImageProcessor, LineDetection
 
 
 def get_turn_state(current_dir: Direction, next_dir: Direction) -> RobotState:
@@ -31,7 +31,7 @@ def wait_for_mission(
     telemetry: TelemetryServer,
     processor: ImageProcessor,
     last_mission: Optional[Mission] = None,
-) -> Optional[MissionRequest]:
+) -> Optional[Order]:
     """Moteurs coupés, diffuse la caméra jusqu'à un ordre de l'interface (None : fin du programme)."""
     while connection.step():
         frame = connection.get_frame()
@@ -54,7 +54,7 @@ def serve_missions(
     telemetry: TelemetryServer,
     processor: Optional[ImageProcessor] = None,
 ) -> None:
-    """Exécute les livraisons demandées par l'interface, jusqu'à la fin du programme."""
+    """Exécute les ordres de l'interface, jusqu'à la fin du programme."""
     processor = processor or ImageProcessor()
     last_mission: Optional[Mission] = None
     while True:
@@ -62,10 +62,74 @@ def serve_missions(
         if request is None:
             return
         try:
-            last_mission = run_state_machine(connection, serial, request.start, request.destination,
-                                             request.heading, Mode.GRID, processor, telemetry)
+            if isinstance(request, FigureEightRequest):
+                last_mission = None  # la livraison précédente ne doit plus être affichée
+                run_figure_eight(connection, serial, processor, telemetry)
+            else:
+                last_mission = run_state_machine(connection, serial, request.start, request.destination,
+                                                 request.heading, processor, telemetry)
         finally:
             telemetry.mission_finished()
+
+
+def _steer(controller: Control, detection: LineDetection, now: float) -> None:
+    """Suit la ligne si elle est vue, sinon continue tout droit à vitesse réduite."""
+    if detection.cx is not None:
+        half_width = detection.roi_w / 2
+        controller.aim(now, (detection.cx - half_width) / half_width)
+    else:
+        controller.forward(now)
+
+
+def run_figure_eight(
+    connection: RobotConnection,
+    serial: Serial,
+    processor: ImageProcessor,
+    telemetry: TelemetryServer,
+) -> None:
+    """Suit la ligne et traverse les croisements tout droit, jusqu'à l'arrêt demandé par l'interface."""
+    controller = Control(serial)
+    robot_state = RobotState.FOLLOWING
+    crossing_start = crossing_duration = 0.0
+    # Le robot peut être posé sur le croisement : il ne compte qu'une fois quitté.
+    intersection_armed = False
+
+    telemetry.publish(make_status(Mode.HUIT, robot_state, GRID_SIZE + 1, None))
+
+    try:
+        while connection.step():
+            if telemetry.stop_requested:
+                print("Arrêt demandé depuis l'interface.")
+                break
+
+            current_time = connection.get_time()
+            frame = connection.get_frame()
+            if frame is None:  # image perdue : on ne roule pas à l'aveugle
+                controller.stop(current_time)
+                continue
+
+            detection = processor.process_frame(frame)
+            connection.publish_frame(processor.annotate(frame, detection))
+
+            if robot_state == RobotState.FOLLOWING:
+                if not detection.is_intersection:
+                    intersection_armed = True
+                if detection.is_intersection and intersection_armed:
+                    intersection_armed = False
+                    robot_state = RobotState.APPROACHING_INTERSECTION
+                    crossing_start = current_time
+                    crossing_duration = controller.approach_duration(utils.APPROACH_DURATION)
+                _steer(controller, detection, current_time)
+            else:
+                # Tout droit : la correction suivrait l'autre branche du croisement.
+                controller.forward(current_time)
+                if current_time - crossing_start > crossing_duration:
+                    robot_state = RobotState.FOLLOWING
+
+            telemetry.publish(make_status(Mode.HUIT, robot_state, GRID_SIZE + 1, None,
+                                          detection.cx is not None, detection.is_intersection))
+    finally:
+        controller.halt()
 
 
 def run_state_machine(
@@ -74,7 +138,6 @@ def run_state_machine(
     start_pos: Position,
     end_pos: Position,
     robot_dir: Direction,
-    mode: Mode = Mode.GRID,
     processor: Optional[ImageProcessor] = None,
     telemetry: Optional[TelemetryServer] = None,
 ) -> Mission:
@@ -96,15 +159,16 @@ def run_state_machine(
     nav.display_path(grid, path)
     mission = Mission(path, robot_dir)
 
-    robot_state = RobotState.FOLLOWING
+    # Posé sur le croisement de départ, le robot ne peut pas le voir : il y est considéré comme arrêté.
+    robot_state = RobotState.STOP_ON_INTERSECTION
     action_start_time = connection.get_time()
-    approach_duration = APPROACH_DURATION
-    # Empêche de détecter plusieurs fois la même intersection
-    intersection_armed = True
+    approach_duration = utils.APPROACH_DURATION
+    # Empêche de détecter plusieurs fois la même intersection (dont celle de départ, si elle est visible)
+    intersection_armed = False
 
     def publish(line_detected: bool = False, is_intersection: bool = False) -> None:
         if telemetry is not None:
-            telemetry.publish(make_status(mode, robot_state, grid.nb_nodes, mission,
+            telemetry.publish(make_status(Mode.GRID, robot_state, grid.nb_nodes, mission,
                                           line_detected, is_intersection))
 
     publish()
@@ -134,25 +198,18 @@ def run_state_machine(
                     intersection_armed = False
                     robot_state = RobotState.APPROACHING_INTERSECTION
                     action_start_time = current_time
-                    approach_duration = controller.approach_duration(APPROACH_DURATION)
+                    approach_duration = controller.approach_duration(utils.APPROACH_DURATION)
                     print("Intersection détectée !")
 
-                if cx is not None:
-                    half_width = detection.roi_w / 2
-                    controller.aim(current_time, (cx - half_width) / half_width)
-                else:
-                    controller.forward(current_time)
+                _steer(controller, detection, current_time)
 
             elif robot_state == RobotState.APPROACHING_INTERSECTION:
                 controller.forward(current_time)
 
                 if current_time - action_start_time > approach_duration:
-                    if mode == Mode.HUIT:
-                        robot_state = RobotState.FOLLOWING
-                    else:
-                        robot_state = RobotState.STOP_ON_INTERSECTION
-                        action_start_time = current_time
-                        print("Arrivée au centre de l'intersection.")
+                    robot_state = RobotState.STOP_ON_INTERSECTION
+                    action_start_time = current_time
+                    print("Arrivée au centre de l'intersection.")
 
             elif robot_state == RobotState.STOP_ON_INTERSECTION:
                 if controller.stop(current_time):

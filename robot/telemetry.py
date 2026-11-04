@@ -1,9 +1,13 @@
 """Tableau de bord du robot : état en JSON, page de commande et ordres de l'interface.
 
-    http://<IP_du_Pi>:8001/            mode livraison, grille en direct et image traitée
+    http://<IP_du_Pi>:8001/            choix du mode, grille en direct et image traitée
     http://<IP_du_Pi>:8001/state.json  état courant du robot
-    POST /mission                      {"start": [x, y], "destination": [x, y], "heading": "SOUTH"}
+    POST /mission                      {"start": [x, y], "destination": [x, y], "heading": "SOUTH"} : livraison
+                                       {"mode": "HUIT"} : suivi de ligne sur le parcours en 8
     POST /stop                         coupe les moteurs immédiatement
+    GET  /settings                     réglages et valeurs courantes
+    POST /settings                     {"values": {"KP": 0.2}}, appliqué tout de suite
+    POST /settings/reset               {"keys": ["KP"]}, ou {} pour tout réinitialiser
 
 Le serveur tourne dans un thread du programme du robot : il dépose les ordres, et la boucle
 du robot les lit. Aucune authentification : à n'utiliser que sur un réseau de confiance.
@@ -22,16 +26,16 @@ import webbrowser
 from dataclasses import asdict, dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from planning.direction import Direction
-from planning.navigation import GRID_SIZE, Mission, Position
+from planning.navigation import Mission, Position
+from planning.utils import GRID_SIZE
+from robot import tuning
+from robot.utils import DASHBOARD_PORT, MAX_REQUEST_BYTES, TELEMETRY_PORT
 from robot.states import Mode, RobotState
 
-TELEMETRY_PORT = 8001    # doit correspondre à TELEMETRY_PORT dans frontend/app.py
-DASHBOARD_PORT = 8501
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
-MAX_REQUEST_BYTES = 4096
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,14 @@ class MissionRequest:
     start: Position
     destination: Position
     heading: Direction
+
+
+@dataclass(frozen=True)
+class FigureEightRequest:
+    """Suivi de ligne sur le parcours en 8, jusqu'à l'arrêt demandé : aucun paramètre."""
+
+
+Order = Union[MissionRequest, FigureEightRequest]
 
 
 def _parse_node(value: Any, name: str, grid_nodes: int) -> Position:
@@ -49,14 +61,39 @@ def _parse_node(value: Any, name: str, grid_nodes: int) -> Position:
     return value[0], value[1]
 
 
-def parse_mission(body: bytes, grid_nodes: int) -> MissionRequest:
-    """Valide un ordre reçu de l'interface. Lève ValueError avec un message affichable."""
+def _parse_object(body: bytes) -> Dict[str, Any]:
     try:
         data = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
         raise ValueError("Requête illisible.") from None
     if not isinstance(data, dict):
         raise ValueError("Requête illisible.")
+    return data
+
+
+def apply_settings(path: str, body: bytes) -> None:
+    """Exécute une demande de changement de réglages. Lève ValueError avec un message affichable."""
+    data = _parse_object(body)
+    if path == "/settings":
+        values = data.get("values")
+        if not isinstance(values, dict):
+            raise ValueError("Requête illisible.")
+        tuning.update(values)
+    else:
+        keys = data.get("keys")
+        if keys is not None and not (isinstance(keys, list) and all(isinstance(key, str) for key in keys)):
+            raise ValueError("Requête illisible.")
+        tuning.reset(keys)
+
+
+def parse_mission(body: bytes, grid_nodes: int) -> Order:
+    """Valide un ordre reçu de l'interface. Lève ValueError avec un message affichable."""
+    data = _parse_object(body)
+    mode = data.get("mode", Mode.GRID.name)
+    if mode == Mode.HUIT.name:
+        return FigureEightRequest()
+    if mode != Mode.GRID.name:
+        raise ValueError("Mode inconnu.")
     start = _parse_node(data.get("start"), "Départ", grid_nodes)
     destination = _parse_node(data.get("destination"), "Arrivée", grid_nodes)
     if start == destination:
@@ -75,7 +112,7 @@ class RobotStatus:
     start: Optional[Position]  # None : aucune mission lancée depuis le démarrage
     destination: Optional[Position]
     route: List[Position]  # chemin de l'étape en cours (aller ou retour)
-    position: Optional[Position]  # dernier nœud atteint (None : pas encore arrivé au départ)
+    position: Optional[Position]  # dernier nœud atteint (None : aucune mission lancée)
     next_node: Optional[Position]
     heading: Optional[str]
     destination_reached: bool
@@ -114,7 +151,7 @@ class TelemetryServer:
         self.port = port
         self._lock = threading.Lock()
         self._state_json: Optional[bytes] = None
-        self._pending: Optional[MissionRequest] = None
+        self._pending: Optional[Order] = None
         self._busy = False  # une mission est en cours
         self._stop_requested = threading.Event()
         page = (FRONTEND_DIR / "live.html").read_bytes()
@@ -129,21 +166,25 @@ class TelemetryServer:
                         self.send_error(503, "Robot pas encore démarré")
                     else:
                         self._send(body, "application/json")
+                elif path == "/settings":
+                    self._send_settings()
                 elif path in ("/", "/index.html"):
                     self._send(page, "text/html; charset=utf-8")
                 else:
                     self.send_error(404)
 
             def do_POST(self) -> None:
-                # Exiger du JSON empêche un autre site de déclencher le robot depuis le navigateur.
-                if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
-                    self._reply(415, "Requête JSON attendue.")
-                    return
                 length = int(self.headers.get("Content-Length") or 0)
                 if not 0 <= length <= MAX_REQUEST_BYTES:
                     self._reply(413, "Requête trop longue.")
                     return
+                # Lu avant toute réponse : fermer un socket avec des données non lues envoie
+                # un RST sous Windows, et le client perdrait la réponse.
                 body = self.rfile.read(length)
+                # Exiger du JSON empêche un autre site de déclencher le robot depuis le navigateur.
+                if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
+                    self._reply(415, "Requête JSON attendue.")
+                    return
                 path = self.path.split("?", 1)[0]
                 if path == "/mission":
                     try:
@@ -158,8 +199,18 @@ class TelemetryServer:
                 elif path == "/stop":
                     telemetry._request_stop()
                     self._reply(200)
+                elif path in ("/settings", "/settings/reset"):
+                    try:
+                        apply_settings(path, body)
+                    except ValueError as exc:
+                        self._reply(400, str(exc))
+                        return
+                    self._send_settings()
                 else:
                     self.send_error(404)
+
+            def _send_settings(self) -> None:
+                self._send(json.dumps({"settings": tuning.describe()}).encode(), "application/json")
 
             def _reply(self, status: int, error: Optional[str] = None) -> None:
                 body = json.dumps({"error": error}).encode()
@@ -184,7 +235,7 @@ class TelemetryServer:
         with self._lock:
             return self._state_json
 
-    def _submit_mission(self, request: MissionRequest) -> bool:
+    def _submit_mission(self, request: Order) -> bool:
         with self._lock:
             if self._busy or self._pending is not None:
                 return False
@@ -197,7 +248,7 @@ class TelemetryServer:
             if self._busy:
                 self._stop_requested.set()
 
-    def take_mission(self) -> Optional[MissionRequest]:
+    def take_mission(self) -> Optional[Order]:
         """Renvoie l'ordre en attente (None s'il n'y en a pas) et marque la mission comme lancée."""
         with self._lock:
             request, self._pending = self._pending, None

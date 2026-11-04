@@ -1,0 +1,155 @@
+"""Réglages modifiables depuis l'interface web, appliqués tout de suite et conservés au redémarrage.
+
+Les valeurs par défaut restent dans les fichiers utils.py. settings.json (non versionné) ne contient
+que celles qui en diffèrent : modifier un utils.py reste donc pris en compte pour tout réglage
+qui n'a pas été changé depuis l'interface.
+
+Pour ajouter un réglage : ajouter une entrée à SETTINGS, avec des bornes qui ne peuvent pas
+faire planter le robot. Le code doit lire la constante sous la forme `utils.NOM`.
+"""
+from __future__ import annotations
+
+import json
+import os
+import threading
+from dataclasses import dataclass
+from pathlib import Path
+from types import ModuleType
+from typing import Any, Dict, Iterable, List, Mapping, Optional
+
+from connections import utils as connections_utils
+from robot import utils as robot_utils
+from vision import utils as vision_utils
+
+SETTINGS_FILE = Path(__file__).resolve().parents[1] / "settings.json"
+
+
+@dataclass(frozen=True)
+class Setting:
+    key: str  # nom de la constante dans le module
+    module: ModuleType
+    group: str
+    label: str
+    help: str
+    minimum: float
+    maximum: float
+    step: float
+    unit: str = ""
+    integer: bool = False
+
+
+SETTINGS = (
+    Setting("BASE_SPEED", robot_utils, "Déplacement", "Vitesse sur la ligne",
+            "Vitesse en suivi de ligne, en fraction de la vitesse maximale.", 0.05, 1.0, 0.01),
+    Setting("FORWARD_SPEED", robot_utils, "Déplacement", "Vitesse d'approche",
+            "Vitesse à l'approche d'un croisement, ou quand la ligne est perdue.", 0.02, 1.0, 0.01),
+    Setting("RAMP_TIME_CONSTANT", robot_utils, "Déplacement", "Douceur des rampes",
+            "Plus la valeur est grande, plus le robot accélère et freine doucement.", 0.01, 1.0, 0.01, "s"),
+    Setting("KP", robot_utils, "Suivi de ligne", "Force de correction (kp)",
+            "Vitesse ajoutée à une roue et retirée à l'autre quand la ligne est au bord de l'image.",
+            0.0, 1.0, 0.01),
+    Setting("TIME_STEP_MS", connections_utils, "Suivi de ligne", "Période de la boucle",
+            "Temps d'attente entre deux images traitées, sur le robot réel. Plus court : "
+            "réagit plus vite, mais charge davantage le Pi.", 10, 200, 1, "ms", integer=True),
+    Setting("APPROACH_DURATION", robot_utils, "Croisements", "Durée d'approche",
+            "Temps pour atteindre le centre du croisement après l'avoir détecté. "
+            "Le robot s'arrête trop tôt : augmenter.", 0.0, 3.0, 0.05, "s"),
+    Setting("TURN_SPEED", robot_utils, "Croisements", "Vitesse de rotation",
+            "Vitesse des roues pendant un virage sur place.", 0.1, 1.0, 0.01),
+    Setting("TURN_DURATION", robot_utils, "Croisements", "Durée d'un quart de tour",
+            "Le robot tourne trop peu : augmenter. Un demi-tour dure deux fois ce temps.",
+            0.1, 5.0, 0.05, "s"),
+    Setting("BINARY_THRESHOLD", vision_utils, "Vision", "Seuil de blanc",
+            "Niveau de gris à partir duquel un pixel fait partie de la ligne. "
+            "Baisser si la ligne n'est pas vue, monter si le sol passe en vert.",
+            0, 255, 1, integer=True),
+    Setting("ROI_TOP_RATIO", vision_utils, "Vision", "Haut de la zone analysée",
+            "Fraction de la hauteur de l'image où commence la zone analysée. "
+            "Plus petit : le robot regarde plus loin.", 0.1, 0.9, 0.05),
+    Setting("MIN_LINE_AREA", vision_utils, "Vision", "Surface minimale de ligne",
+            "En dessous de cette surface, une tache blanche est ignorée.", 0, 2000, 10, "px", integer=True),
+)
+
+_BY_KEY: Dict[str, Setting] = {setting.key: setting for setting in SETTINGS}
+_DEFAULTS: Dict[str, float] = {setting.key: getattr(setting.module, setting.key) for setting in SETTINGS}
+_lock = threading.Lock()
+
+
+def _validated(setting: Setting, value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{setting.label} : valeur numérique attendue.")
+    # Écrit ainsi, le test rejette aussi NaN, l'infini et les entiers géants qu'accepte json.loads.
+    if not setting.minimum <= value <= setting.maximum:
+        raise ValueError(f"{setting.label} : doit être entre {setting.minimum:g} et {setting.maximum:g}.")
+    if setting.integer:
+        if value != int(value):
+            raise ValueError(f"{setting.label} : valeur entière attendue.")
+        return int(value)
+    return float(value)
+
+
+def describe() -> List[Dict[str, Any]]:
+    """Réglages et valeurs courantes, pour l'interface."""
+    return [
+        {"key": s.key, "group": s.group, "label": s.label, "help": s.help, "unit": s.unit,
+         "min": s.minimum, "max": s.maximum, "step": s.step,
+         "value": getattr(s.module, s.key), "default": _DEFAULTS[s.key]}
+        for s in SETTINGS
+    ]
+
+
+def _save() -> None:
+    """Écriture atomique : une coupure de courant ne peut pas laisser un fichier à moitié écrit."""
+    overrides = {s.key: getattr(s.module, s.key) for s in SETTINGS
+                 if getattr(s.module, s.key) != _DEFAULTS[s.key]}
+    temporary = SETTINGS_FILE.with_suffix(".tmp")
+    try:
+        temporary.write_text(json.dumps(overrides, indent=2) + "\n", encoding="utf-8")
+        os.replace(str(temporary), str(SETTINGS_FILE))
+    except OSError as exc:
+        print(f"[réglages] impossible d'enregistrer {SETTINGS_FILE} : {exc}")
+
+
+def update(values: Mapping[str, object]) -> None:
+    """Applique des réglages : tous, ou aucun si l'un d'eux est invalide (ValueError)."""
+    checked = {}
+    for key, value in values.items():
+        if key not in _BY_KEY:
+            raise ValueError(f"Réglage inconnu : {key}.")
+        checked[key] = _validated(_BY_KEY[key], value)
+    with _lock:
+        for key, value in checked.items():
+            setattr(_BY_KEY[key].module, key, value)
+        _save()
+
+
+def reset(keys: Optional[Iterable[str]] = None) -> None:
+    """Revient aux valeurs par défaut des réglages donnés, ou de tous."""
+    update({key: _DEFAULTS[key] for key in (_DEFAULTS if keys is None else keys) if key in _DEFAULTS})
+
+
+def load() -> None:
+    """Recharge les réglages enregistrés. Une valeur invalide est ignorée : le robot doit démarrer."""
+    try:
+        saved = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError) as exc:
+        print(f"[réglages] {SETTINGS_FILE} illisible, valeurs par défaut utilisées : {exc}")
+        return
+    if not isinstance(saved, dict):
+        print(f"[réglages] {SETTINGS_FILE} illisible, valeurs par défaut utilisées")
+        return
+    for key, value in saved.items():
+        if key not in _BY_KEY:
+            print(f"[réglages] ignoré : réglage inconnu {key}.")
+            continue
+        try:
+            # Pas de _save() ici : une coupure au démarrage ne doit pas faire perdre de réglages.
+            setattr(_BY_KEY[key].module, key, _validated(_BY_KEY[key], value))
+        except ValueError as exc:
+            print(f"[réglages] ignoré : {exc}")
+    if saved:
+        print("[réglages] valeurs modifiées depuis l'interface :",
+              ", ".join(f"{s.key}={getattr(s.module, s.key)}" for s in SETTINGS
+                        if getattr(s.module, s.key) != _DEFAULTS[s.key]))

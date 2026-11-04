@@ -4,10 +4,9 @@ from collections import deque
 from typing import Deque, List, Optional, Tuple
 
 from planning.direction import Direction
+from planning.utils import GRID_SIZE
 
 Position = Tuple[int, int]  # (x, y), y croissant vers le sud
-
-GRID_SIZE = 4  # nombre de cases par côté de la grille
 
 
 class IntersectionPoint:
@@ -27,7 +26,7 @@ class IntersectionPoint:
 
 class Grid:
 
-    def __init__(self, size: int = 4) -> None:
+    def __init__(self, size: int = GRID_SIZE) -> None:
         # size représente le nombre de cases
         # size + 1 représente le nombre d'intersections
         self.size = size
@@ -227,8 +226,8 @@ class Navigation:
 class Mission:
     """Aller-retour sur un chemin : à destination, demi-tour et retour par le même chemin.
 
-    `on_intersection` est appelé à chaque arrêt sur une intersection. Le robot démarre avant
-    le premier nœud : le premier arrêt a donc lieu sur le point de départ.
+    `on_intersection` est appelé à chaque arrêt sur une intersection. Le robot démarre posé sur
+    le premier nœud : le premier appel a donc lieu au lancement, sans attendre la vision.
     """
 
     def __init__(self, path: List[Position], heading: Optional[Direction] = None) -> None:
@@ -238,7 +237,7 @@ class Mission:
         self.destination = path[-1]
         self.route = list(path)
         self.heading = heading  # orientation courante du robot
-        self.position: Optional[Position] = None  # dernier nœud atteint
+        self.position: Position = path[0]  # dernier nœud atteint
         self.destination_reached = False  # levé à l'arrivée à destination
         self.returned_home = False  # levé au retour sur le point de départ
         self._index = 0
@@ -269,7 +268,7 @@ class Mission:
 
 if __name__ == "__main__":
 
-    grid = Grid(4)
+    grid = Grid()
     nav = Navigation()
 
     start_pos = (0, 1)
