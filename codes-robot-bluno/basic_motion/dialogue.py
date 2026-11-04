@@ -42,7 +42,7 @@ def DialArduino():
 
 #  setting up the serial link with Arduino
 # -----------------------------------------
-arduino = serial.Serial(port='/dev/ttyACM1', baudrate=115200, timeout=0.1)
+arduino = serial.Serial(port='/dev/ttyACM0', baudrate=115200, timeout=0.1)
 print("Connecting to Arduino")
 time.sleep(2)  # waiting for 2s for the Arduino to be initialised
 

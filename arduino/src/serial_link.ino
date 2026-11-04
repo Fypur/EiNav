@@ -58,6 +58,22 @@ MyServo frontservo(ServofrontPin,30,150,10);
 //
 /////////////////////////////////////////////////////////////////////////
 
+// sensor management
+volatile unsigned long pulseStart = 0;
+volatile unsigned long pulseDuration = 0;
+
+void timeEcho() {
+  if (digitalRead(URM_ECHO) == LOW)
+    pulseStart = micros();
+  else
+    pulseDuration = micros() - pulseStart;
+}
+
+void URMsetup() {
+  pinMode(URM_ECHO, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(URM_ECHO), timeEcho, CHANGE);
+}
+
 void init_arduino() {
 
   FRmotor.setvalue(0);
@@ -78,6 +94,7 @@ void setup() {
   Serial.setTimeout(SERIAL_TIMEOUT); // timeout pour attendre une fin de message
 
   init_arduino() ;
+  URMsetup() ;
 
   attachInterrupt(digitalPinToInterrupt(Encoder1B), FRcoderISR, FALLING); // interrupt attachment for encoder routines
   attachInterrupt(digitalPinToInterrupt(Encoder2B), FLcoderISR, FALLING); 

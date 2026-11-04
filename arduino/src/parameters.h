@@ -7,6 +7,7 @@
 /* full Bluno wiring */
 const int ServofrontPin = 26;
 const int IR_pin = A6;
+const int URM_ECHO = 2;
 
 const int dirMotor1 = 4;  // motor direction pin
 const int vitMotor1 = 3;  // motor PWM pin
