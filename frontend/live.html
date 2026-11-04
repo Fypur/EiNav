@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robot en direct</title>
+<style>
+  :root { --bg:#101B2D; --panel:#16233A; --line:#33465F; --text:#E2E8F0; --muted:#9EB0C6;
+          --route:#38BDF8; --robot:#10B981; --goal:#F59E0B; --off:#EF4444; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; background:var(--bg); color:var(--text);
+               font:15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px; padding:12px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px; min-width:0; }
+  h2 { margin:0 0 8px; font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
+  svg { display:block; width:100%; max-height:62vh; }
+  iframe { display:block; width:100%; aspect-ratio:5/4; border:0; border-radius:8px; background:#000; }
+  #bar { display:flex; flex-wrap:wrap; gap:6px; padding:12px 12px 0; }
+  .chip { padding:3px 10px; border-radius:999px; border:1px solid var(--line); color:var(--muted); font-size:.85rem; }
+  .chip.on { color:#06281E; background:var(--robot); border-color:var(--robot); font-weight:600; }
+  .chip.off { color:#fff; background:var(--off); border-color:var(--off); font-weight:600; }
+  .legend { margin:8px 0 0; color:var(--muted); font-size:.85rem; }
+</style>
+</head>
+<body>
+<div id="bar">
+  <span class="chip" id="link">Connexion…</span>
+  <span class="chip" id="state">–</span>
+  <span class="chip" id="position">–</span>
+  <span class="chip" id="line">Ligne</span>
+  <span class="chip" id="reached">Destination atteinte</span>
+  <span class="chip" id="home">Retour au départ</span>
+</div>
+<main>
+  <section>
+    <h2>Position sur la grille</h2>
+    <svg id="grid" role="img" aria-label="Position du robot sur la grille"></svg>
+    <p class="legend">Dernière intersection atteinte. Le trait bleu est l'étape en cours.</p>
+  </section>
+  <section>
+    <h2>Image traitée</h2>
+    <iframe id="video" title="Image traitée par le robot"></iframe>
+    <p class="legend">Vert : ligne détectée. Rouge : centre visé. Cadre orange : intersection.</p>
+  </section>
+</main>
+<script>
+  const STREAM_PORT = 8000;      // STREAM_PORT dans vision/camera_pi.py
+  const POLL_MS = 300;
+  const STEP = 60, MARGIN = 40;
+  const ANGLE = { NORTH: 0, EAST: 90, SOUTH: 180, WEST: 270 };
+  const STATE_LABEL = {
+    FOLLOWING: "Suivi de ligne", APPROACHING_INTERSECTION: "Approche d'intersection",
+    STOP_ON_INTERSECTION: "Arrêt sur intersection", TURNING_90: "Rotation à gauche",
+    TURNING_MINUS_90: "Rotation à droite", TURNING_180: "Demi-tour", STOPPED: "Arrêté",
+  };
+
+  // Un flux MJPEG ne finit jamais de charger : on l'ouvre après le chargement de la page,
+  // sinon l'onglet (et l'iframe de Streamlit) resterait « en cours de chargement ».
+  window.addEventListener("load", () => {
+    document.getElementById("video").src =
+      `${location.protocol}//${location.hostname}:${STREAM_PORT}/`;
+  });
+
+  const SVG_NS = "http://www.w3.org/2000/svg";
+  const svg = document.getElementById("grid");
+  const el = (name, attrs, parent = svg) => {
+    const node = document.createElementNS(SVG_NS, name);
+    for (const key in attrs) node.setAttribute(key, attrs[key]);
+    parent.appendChild(node);
+    return node;
+  };
+  const px = (v) => MARGIN + v * STEP;
+  const polyline = (nodes) => nodes.map(([x, y]) => `${px(x)},${px(y)}`).join(" ");
+
+  function drawGrid(status) {
+    svg.replaceChildren();
+    const n = status.grid_nodes;
+    const size = 2 * MARGIN + (n - 1) * STEP;
+    svg.setAttribute("viewBox", `0 0 ${size} ${size}`);
+
+    for (let i = 0; i < n; i++) {
+      el("line", { x1: px(0), y1: px(i), x2: px(n - 1), y2: px(i), stroke: "#33465F", "stroke-width": 3 });
+      el("line", { x1: px(i), y1: px(0), x2: px(i), y2: px(n - 1), stroke: "#33465F", "stroke-width": 3 });
+    }
+    el("polyline", { points: polyline(status.route), fill: "none", stroke: "#38BDF8",
+                     "stroke-width": 6, "stroke-linejoin": "round", "stroke-linecap": "round" });
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) el("circle", { cx: px(x), cy: px(y), r: 5, fill: "#687D99" });
+    }
+
+    const marker = ([x, y], color, label) => {
+      el("circle", { cx: px(x), cy: px(y), r: 13, fill: color });
+      const text = el("text", { x: px(x), y: px(y) + 5, "text-anchor": "middle", "font-size": 14,
+                                "font-weight": 700, fill: "#101B2D" });
+      text.textContent = label;
+    };
+    marker(status.start, "#CBD5E1", "D");
+    marker(status.destination, "#F59E0B", "A");
+
+    // Avant le premier arrêt, le robot n'a pas encore atteint le point de départ.
+    const [rx, ry] = status.position || status.start;
+    el("polygon", {
+      points: "0,-20 14,14 0,6 -14,14", fill: "#10B981", stroke: "#D1FAE5", "stroke-width": 2,
+      opacity: status.position ? 1 : 0.55,
+      transform: `translate(${px(rx)} ${px(ry)}) rotate(${ANGLE[status.heading] || 0})`,
+    });
+  }
+
+  const chip = (id, text, cls) => {
+    const node = document.getElementById(id);
+    if (text !== null) node.textContent = text;
+    node.className = "chip" + (cls ? " " + cls : "");
+  };
+
+  async function poll() {
+    try {
+      const response = await fetch("state.json", { cache: "no-store" });
+      if (response.status === 503) {
+        chip("link", "En attente du robot", "");
+      } else if (!response.ok) {
+        throw new Error(response.status);
+      } else {
+        const s = await response.json();
+        drawGrid(s);
+        chip("link", "En direct", "on");
+        chip("state", STATE_LABEL[s.state] || s.state, "");
+        chip("position", s.position ? `Nœud (${s.position[0]}, ${s.position[1]})` : "Avant le départ", "");
+        chip("line", s.line_detected ? "Ligne détectée" : "Ligne non détectée", s.line_detected ? "on" : "");
+        chip("reached", null, s.destination_reached ? "on" : "");
+        chip("home", null, s.returned_home ? "on" : "");
+      }
+    } catch (error) {
+      chip("link", "Robot hors ligne", "off");
+    }
+    setTimeout(poll, POLL_MS);
+  }
+  poll();
+</script>
+</body>
+</html>

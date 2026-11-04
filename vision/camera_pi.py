@@ -11,7 +11,7 @@ Ici, read() renvoie directement une image BGR (numpy, hauteur x largeur x 3),
 le même format que `image_bgr` dans `detection`.
 
 Utilisation :
-    from camera_pi import RobotCamera
+    from vision.camera_pi import RobotCamera
     cam = RobotCamera()
     image_bgr = cam.read()          # l'image est aussi envoyée au flux vidéo
     cam.publish(image_annotee)      # facultatif : diffuser plutôt l'image avec les détections
@@ -30,12 +30,16 @@ Flux vidéo (défi 4.1) :
 Sources essayées dans l'ordre : picamera (vieux Raspbian), picamera2 (Raspbian récent),
 webcam OpenCV (pour tester sur PC).
 """
+from __future__ import annotations
+
 import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Optional, Tuple
 
 import cv2
+import numpy as np
 
 RESOLUTION = (160, 128)  # (largeur, hauteur), même taille que les images de data/images_2025
 MAX_FULL_FOV_FPS = 40    # cadence max des modes capteur plein champ (binning 2x2)
@@ -62,12 +66,12 @@ class _HTTPServer(ThreadingHTTPServer):
 class FrameStreamer:
     """Serveur HTTP qui diffuse les dernières images publiées au format MJPEG."""
 
-    def __init__(self, port=STREAM_PORT, fps=STREAM_FPS, quality=JPEG_QUALITY):
+    def __init__(self, port: int = STREAM_PORT, fps: int = STREAM_FPS, quality: int = JPEG_QUALITY) -> None:
         self.port = port
         self._period = 1.0 / fps if fps > 0 else 0.0
         self._quality = int(quality)
         self._cond = threading.Condition()
-        self._jpeg = None
+        self._jpeg: Optional[bytes] = None
         self._frame_id = 0
         self._last_publish = 0.0
         self._closed = False
@@ -75,7 +79,7 @@ class FrameStreamer:
         streamer = self
 
         class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
+            def do_GET(self) -> None:
                 path = self.path.split("?", 1)[0]
                 if path == "/stream.mjpg":
                     streamer._serve_stream(self)
@@ -90,14 +94,14 @@ class FrameStreamer:
                 else:
                     self.send_error(404)
 
-            def log_message(self, *args):
+            def log_message(self, *args: Any) -> None:
                 pass  # pas de log à chaque requête
 
         self._server = _HTTPServer(("0.0.0.0", port), Handler)  # OSError si port pris
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
 
-    def publish(self, frame):
+    def publish(self, frame: Optional[np.ndarray]) -> None:
         """Encode l'image BGR en JPEG et la rend disponible aux navigateurs connectés."""
         if frame is None or self._closed:
             return
@@ -113,7 +117,7 @@ class FrameStreamer:
             self._frame_id += 1
             self._cond.notify_all()
 
-    def _serve_snapshot(self, handler):
+    def _serve_snapshot(self, handler: BaseHTTPRequestHandler) -> None:
         with self._cond:
             jpeg = self._jpeg
         if jpeg is None:
@@ -127,7 +131,7 @@ class FrameStreamer:
         handler.end_headers()
         handler.wfile.write(jpeg)
 
-    def _serve_stream(self, handler):
+    def _serve_stream(self, handler: BaseHTTPRequestHandler) -> None:
         handler.send_response(200)
         handler.send_header("Content-Type", "multipart/x-mixed-replace; boundary=" + BOUNDARY.decode())
         handler.send_header("Cache-Control", "no-store")
@@ -150,7 +154,7 @@ class FrameStreamer:
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass  # le navigateur a fermé la page
 
-    def close(self):
+    def close(self) -> None:
         with self._cond:
             self._closed = True
             self._cond.notify_all()
@@ -158,7 +162,7 @@ class FrameStreamer:
         self._server.server_close()
 
 
-def _full_fov_mode_size(picam2):
+def _full_fov_mode_size(picam2: Any) -> Optional[Tuple[int, int]]:
     """picamera2 : taille du mode capteur le plus rapide parmi ceux qui couvrent tout le capteur
     (None si les modes ne peuvent pas être lus : libcamera choisira alors seul)."""
     try:
@@ -173,8 +177,10 @@ def _full_fov_mode_size(picam2):
 
 
 class RobotCamera:
-    def __init__(self, resolution=RESOLUTION, framerate=32, stream=True, stream_port=STREAM_PORT):
+    def __init__(self, resolution: Tuple[int, int] = RESOLUTION, framerate: int = 32,
+                 stream: bool = True, stream_port: int = STREAM_PORT) -> None:
         self.resolution = resolution
+        self._cam: Any
         try:
             from picamera import PiCamera
             from picamera.array import PiRGBArray
@@ -212,7 +218,7 @@ class RobotCamera:
                 self.kind = "opencv"
 
         # Diffusion vers l'interface. Une erreur ici ne doit jamais empêcher le robot de rouler.
-        self.streamer = None
+        self.streamer: Optional[FrameStreamer] = None
         self._publish_raw = True
         if stream:
             try:
@@ -221,22 +227,22 @@ class RobotCamera:
             except OSError as exc:
                 print(f"[camera] flux vidéo désactivé (port {stream_port} indisponible : {exc})")
 
-    def read(self):
+    def read(self) -> Optional[np.ndarray]:
         """Renvoie une image BGR (hauteur x largeur x 3), ou None si la lecture échoue."""
         frame = self._read_frame()
         if self._publish_raw and self.streamer is not None:
             self.streamer.publish(frame)
         return frame
 
-    def publish(self, frame):
+    def publish(self, frame: np.ndarray) -> None:
         """Diffuse une image (par ex. annotée avec les détections) à la place de l'image brute."""
         self._publish_raw = False
         if self.streamer is not None:
             self.streamer.publish(frame)
 
-    def _read_frame(self):
+    def _read_frame(self) -> Optional[np.ndarray]:
         if self.kind == "picamera":
-            frame = cv2.flip(next(self._stream).array,0)
+            frame = next(self._stream).array
             self._raw.truncate(0)
             return frame
         if self.kind == "picamera2":
@@ -244,7 +250,7 @@ class RobotCamera:
         ok, frame = self._cam.read()
         return cv2.resize(frame, self.resolution) if ok else None
 
-    def close(self):
+    def close(self) -> None:
         """À appeler en fin de programme pour libérer la caméra et arrêter le flux."""
         if self.streamer is not None:
             self.streamer.close()
@@ -259,7 +265,7 @@ class RobotCamera:
 
 
 if __name__ == "__main__":
-    # Test rapide sur le robot : python camera_pi.py
+    # Test rapide sur le robot : python vision/camera_pi.py
     #   -> enregistre test_camera.png puis diffuse le flux jusqu'à Ctrl+C
     cam = RobotCamera()
     print("Caméra :", cam.kind)

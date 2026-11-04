@@ -1,4 +1,10 @@
+"""Modes de mission et états de la machine à états du robot."""
 from enum import Enum, auto
+
+
+class Mode(Enum):
+    GRID = auto()
+    HUIT = auto()
 
 
 class RobotState(Enum):

@@ -2,28 +2,32 @@
 # CENTRALESUPELEC : ST5 VAC challenge week
 #########################################################################
 
-import serial 
-import struct
+from __future__ import annotations
 
-def read_i16(f):
+import struct
+from typing import Tuple
+
+from serial import Serial as SerialPort
+
+def read_i16(f: SerialPort) -> int:
     return struct.unpack('<h', bytearray(f.read(2)))[0]
 
-def read_i32(f):
+def read_i32(f: SerialPort) -> int:
     return struct.unpack('<l', bytearray(f.read(4)))[0]
 
-def write_i16(f, value):
+def write_i16(f: SerialPort, value: int) -> None:
     f.write(struct.pack('<h', value))
 
-def write_i32(f, value):
+def write_i32(f: SerialPort, value: int) -> None:
     f.write(struct.pack('<l', value))
 
-def WaitACK(arduino):
+def WaitACK(arduino: SerialPort) -> None:
     rep=b''
     while rep==b'':					# waiting acknowledgement of B2
         rep=arduino.readline()
     print(rep.decode())
 
-def sendCmdi(arduino,cmd,arg1,arg2,arg3,arg4): # send command with 4 ints
+def sendCmdi(arduino: SerialPort, cmd: bytes, arg1: int, arg2: int, arg3: int, arg4: int) -> None: # send command with 4 ints
     arduino.write(cmd)
     write_i16(arduino, arg1)
     write_i16(arduino, arg2)
@@ -31,13 +35,13 @@ def sendCmdi(arduino,cmd,arg1,arg2,arg3,arg4): # send command with 4 ints
     write_i16(arduino, arg4)
     WaitACK(arduino)
 
-def sendCmdl(arduino,cmd,arg1,arg2): # send command with 2 longs
+def sendCmdl(arduino: SerialPort, cmd: bytes, arg1: int, arg2: int) -> None: # send command with 2 longs
     arduino.write(cmd)
     write_i32(arduino, arg1)
     write_i32(arduino, arg2)
     WaitACK(arduino)
 
-def retrCmdi(arduino,cmd): # retrieve command with 4 ints
+def retrCmdi(arduino: SerialPort, cmd: bytes) -> Tuple[int, int, int, int]: # retrieve command with 4 ints
     arduino.write(cmd)
     val1=read_i16(arduino)
     val2=read_i16(arduino)
@@ -46,7 +50,7 @@ def retrCmdi(arduino,cmd): # retrieve command with 4 ints
     return val1,val2,val3,val4
     WaitACK(arduino)
 
-def retrCmdl(arduino,cmd): # retrieve command with 2 longs
+def retrCmdl(arduino: SerialPort, cmd: bytes) -> Tuple[int, int]: # retrieve command with 2 longs
     arduino.write(cmd)
     val1=read_i32(arduino)
     val2=read_i32(arduino)

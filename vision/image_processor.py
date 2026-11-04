@@ -1,13 +1,27 @@
+from __future__ import annotations
+
+from typing import NamedTuple, Optional
+
 import cv2
 import numpy as np
 
+ROI_COLOR = (255, 200, 0)
+LINE_COLOR = (0, 200, 0)
+TARGET_COLOR = (0, 0, 255)
+INTERSECTION_COLOR = (0, 165, 255)
+
+
+class LineDetection(NamedTuple):
+    cx: Optional[int]  # abscisse du centre de la ligne (None : pas de ligne)
+    is_intersection: bool
+    roi_w: int
+    roi_top: int  # ordonnée du haut de la zone d'intérêt dans l'image
+    mask: np.ndarray  # image binaire de la zone d'intérêt
+
 
 class ImageProcessor:
-    def process_frame(self, image_bgr: np.ndarray):
-        """
-        Applique le pipeline de traitement sur l'image BGR
-        et retourne (cx, is_intersection, roi_w).
-        """
+    def process_frame(self, image_bgr: np.ndarray) -> LineDetection:
+        """Applique le pipeline de traitement sur l'image BGR et retourne la détection."""
         h, w = image_bgr.shape[:2]
 
         # Définition de la Zone d'Intérêt (tiers inférieur)
@@ -30,7 +44,7 @@ class ImageProcessor:
         # --- Etape 4 : Reconnaissance des contours et intersections ---
         contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-        cx = None
+        cx: Optional[int] = None
         is_intersection = False
 
         if len(contours) > 0:
@@ -48,4 +62,16 @@ class ImageProcessor:
                 if M['m00'] > 0:
                     cx = int(M['m10'] / M['m00'])
 
-        return cx, is_intersection, roi_w
+        return LineDetection(cx, bool(is_intersection), roi_w, roi_top, morphed)
+
+    def annotate(self, image_bgr: np.ndarray, detection: LineDetection) -> np.ndarray:
+        """Image traitée pour le tableau de bord : zone d'intérêt, ligne détectée et son centre."""
+        annotated = image_bgr.copy()
+        h, w = annotated.shape[:2]
+        roi = annotated[detection.roi_top:h, 0:w]
+        roi[detection.mask > 0] = LINE_COLOR
+        cv2.rectangle(annotated, (0, detection.roi_top), (w - 1, h - 1),
+                      INTERSECTION_COLOR if detection.is_intersection else ROI_COLOR, 1)
+        if detection.cx is not None:
+            cv2.line(annotated, (detection.cx, detection.roi_top), (detection.cx, h - 1), TARGET_COLOR, 1)
+        return annotated
