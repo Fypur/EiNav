@@ -467,6 +467,11 @@ class LineScriptProcessor(FakeProcessor):
         return LineDetection(cx, False, 160, 76, np.zeros((52, 160), np.uint8))
 
 
+def _brief_loss(dt: float = 0.05) -> int:
+    """Nombre d'images sans ligne qui reste sous le délai de ligne perdue."""
+    return int(0.9 * robot_utils.LINE_LOST_TIMEOUT / dt)
+
+
 def _grid_mission(visible: Any, heading: Direction = Direction.SOUTH, steps: int = 400) -> Tuple[Mission, FakeConnection,
                                                                                                 FakeSerial]:
     connection, serial = FakeConnection(max_steps=steps), FakeSerial()
@@ -487,15 +492,15 @@ def test_ligne_perdue_plus_d_une_seconde_arrete_la_mission() -> None:
 
 
 def test_ligne_perdue_moins_d_une_seconde_ne_change_rien() -> None:
-    """0,9 s sans ligne (18 images à 0,05 s), puis la ligne revient."""
-    mission, connection, _ = _grid_mission(lambda i: not 20 < i <= 38, steps=200)
+    """Sans ligne un peu moins longtemps que le délai, puis la ligne revient."""
+    mission, connection, _ = _grid_mission(lambda i: not 20 < i <= 20 + _brief_loss(), steps=200)
     assert not mission.line_lost
     assert connection.steps == 200, "le robot roule toujours"
 
 
 def test_pertes_breves_repetees_ne_s_additionnent_pas() -> None:
-    mission, _, _ = _grid_mission(lambda i: i % 15 == 0, steps=300)
-    assert not mission.line_lost, "une image avec la ligne toutes les 0,75 s suffit à continuer"
+    mission, _, _ = _grid_mission(lambda i: i % _brief_loss() == 0, steps=300)
+    assert not mission.line_lost, "une image avec la ligne de temps en temps suffit à continuer"
 
 
 def test_ligne_invisible_pendant_un_virage_n_arrete_pas() -> None:
@@ -526,7 +531,7 @@ def test_huit_s_arrete_si_la_ligne_est_perdue() -> None:
 
 def test_huit_continue_si_la_ligne_revient() -> None:
     connection = FakeConnection(max_steps=100)
-    line_lost = run_figure_eight(connection, FakeSerial(), LineScriptProcessor(lambda i: not 20 < i <= 38),  # type: ignore[arg-type]
+    line_lost = run_figure_eight(connection, FakeSerial(), LineScriptProcessor(lambda i: not 20 < i <= 20 + _brief_loss()),  # type: ignore[arg-type]
                                  Recorder())  # type: ignore[arg-type]
     assert line_lost is False
 

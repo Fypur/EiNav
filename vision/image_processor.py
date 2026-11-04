@@ -16,6 +16,16 @@ class LineDetection(NamedTuple):
     mask: np.ndarray  # image binaire de la zone d'intérêt
 
 
+def _widest_run(mask: np.ndarray) -> int:
+    """Plus grand nombre de pixels blancs consécutifs sur une même ligne de l'image binaire."""
+    widest = 0
+    for row in mask > 0:
+        edges = np.flatnonzero(np.diff(np.concatenate(([False], row, [False])).astype(np.int8)))
+        if edges.size:
+            widest = max(widest, int((edges[1::2] - edges[::2]).max()))
+    return widest
+
+
 class ImageProcessor:
     def process_frame(self, image_bgr: np.ndarray) -> LineDetection:
         """Applique le pipeline de traitement sur l'image BGR et retourne la détection."""
@@ -52,8 +62,10 @@ class ImageProcessor:
                 touches_left = np.any(morphed[:, 0] > 0)
                 touches_right = np.any(morphed[:, roi_w - 1] > 0)
 
+                # Une ligne en biais qui passe par un coin touche aussi le haut, le bas et un côté :
+                # seul un croisement a en plus une large bande horizontale.
                 if touches_top and touches_bottom and (touches_left or touches_right):
-                    is_intersection = True
+                    is_intersection = _widest_run(morphed) >= utils.INTERSECTION_MIN_WIDTH_RATIO * roi_w
 
                 M = cv2.moments(max_contour)
                 if M['m00'] > 0:

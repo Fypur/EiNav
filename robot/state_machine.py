@@ -39,8 +39,9 @@ def wait_for_mission(
     """Moteurs coupés, diffuse la caméra jusqu'à un ordre de l'interface (None : fin du programme)."""
     obstacle = ObstacleGuard()
     while connection.step():
-        if telemetry.take_blocked_reset():
+        if telemetry.take_map_reset():
             grid.clear_blocked()
+            last_mission, line_lost = None, False  # plus d'arête, de chemin ni d'alerte affichés
         obstacle.update(serial.get_distance_cm())  # pour vérifier le capteur avant de démarrer
         frame = connection.get_frame()
         line_detected = is_intersection = False

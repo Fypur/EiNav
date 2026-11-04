@@ -19,7 +19,7 @@ TURN_180_DURATION = 3.0  # demi-tour
 APPROACH_DURATION = 0.9  # approche du centre d'un croisement, à FORWARD_SPEED
 DELIVERY_HALF_TURNS = 2  # tour complet à destination : deux demi-tours de TURN_180_DURATION
 RAMP_TIME_CONSTANT = 0.15  # constante de temps des accélérations et décélérations
-LINE_LOST_TIMEOUT = 1.0  # cahier des charges : en suivi, arrêt si aucune ligne n'est vue pendant plus longtemps
+LINE_LOST_TIMEOUT = 0.6  # cahier des charges : en suivi, arrêt si aucune ligne n'est vue pendant plus longtemps
 
 # Obstacles : distances en cm, mesurées depuis le capteur ultrason (cahier des charges).
 OBSTACLE_SLOWDOWN_CM = 60  # le robot commence à ralentir en dessous

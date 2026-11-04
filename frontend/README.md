@@ -39,11 +39,11 @@ Pour suivre le parcours en 8 :
 2. poser le robot sur la ligne ;
 3. cliquer sur **Démarrer**. Le robot suit la ligne et traverse le croisement tout droit, sans s'arrêter, jusqu'au clic sur **Arrêter**.
 
-Dans les deux modes, si le robot en suivi de ligne ne voit plus aucune ligne pendant plus d'une seconde (`LINE_LOST_TIMEOUT` dans `robot/utils.py`), il s'arrête et l'interface affiche « Arrêt : ligne perdue ». Il repart seulement après un nouveau clic sur **Démarrer** : en livraison, il faut le reposer sur un croisement de départ.
+Dans les deux modes, si le robot en suivi de ligne ne voit plus aucune ligne pendant plus de `LINE_LOST_TIMEOUT` secondes (`robot/utils.py`), il s'arrête et l'interface affiche « Arrêt : ligne perdue ». Il repart seulement après un nouveau clic sur **Démarrer** : en livraison, il faut le reposer sur un croisement de départ.
 
 Dans les deux modes, le capteur ultrason freine le robot devant un obstacle : il ralentit à moins de 60 cm et s'arrête complètement à 20 cm, distances mesurées depuis le capteur (`OBSTACLE_*` dans `robot/utils.py`). Il repart seul quand l'obstacle s'éloigne au-delà de 25 cm. Si le capteur ne donne aucune mesure, le robot l'ignore et poursuit sa mission **sans détecter les obstacles** ; l'interface affiche alors « Ultrason sans mesure : ignoré ». Le programme `arduino/src` doit être téléversé sur la carte, car il contient la commande de lecture du capteur.
 
-En livraison, si le robot reste arrêté plus d'une seconde devant un obstacle (`OBSTACLE_CONFIRM_SECONDS`), l'arête est retirée du graphe et barrée de rouge sur la grille. Le robot revient à son dernier nœud et repart par un nouveau chemin. Sans chemin possible, il s'arrête et l'interface affiche « Arrêt : aucun chemin ». Les arêtes restent bloquées d'une mission à l'autre, jusqu'au bouton **Débloquer les arêtes** ou au redémarrage du programme. Sur le parcours en 8, le robot attend simplement que la voie se libère.
+En livraison, si le robot reste arrêté plus d'une seconde devant un obstacle (`OBSTACLE_CONFIRM_SECONDS`), l'arête est retirée du graphe et barrée de rouge sur la grille. Le robot revient à son dernier nœud et repart par un nouveau chemin. Sans chemin possible, il s'arrête et l'interface affiche « Arrêt : aucun chemin ». Les arêtes restent bloquées d'une mission à l'autre, jusqu'au bouton **Réinitialiser la carte**, disponible hors mission, ou au redémarrage du programme. Sur le parcours en 8, le robot attend simplement que la voie se libère.
 
 Depuis un navigateur sur le même réseau :
 

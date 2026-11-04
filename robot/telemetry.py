@@ -5,7 +5,7 @@
     POST /mission                      {"start": [x, y], "destination": [x, y], "heading": "SOUTH"} : livraison
                                        {"mode": "HUIT"} : suivi de ligne sur le parcours en 8
     POST /stop                         coupe les moteurs immédiatement
-    POST /blocked/reset                remet dans le graphe les arêtes bloquées par un obstacle
+    POST /map/reset                    réinitialise la carte : plus aucune arête bloquée
     GET  /settings                     réglages et valeurs courantes
     POST /settings                     {"values": {"KP": 0.2}}, appliqué tout de suite
     POST /settings/reset               {"keys": ["KP"]}, ou {} pour tout réinitialiser
@@ -167,7 +167,7 @@ class TelemetryServer:
         self._lock = threading.Lock()
         self._state_json: Optional[bytes] = None
         self._pending: Optional[Order] = None
-        self._blocked_reset = False
+        self._map_reset = False
         self._busy = False  # une mission est en cours
         self._stop_requested = threading.Event()
         page = (FRONTEND_DIR / "live.html").read_bytes()
@@ -215,8 +215,8 @@ class TelemetryServer:
                 elif path == "/stop":
                     telemetry._request_stop()
                     self._reply(200)
-                elif path == "/blocked/reset":
-                    if telemetry._request_blocked_reset():
+                elif path == "/map/reset":
+                    if telemetry._request_map_reset():
                         self._reply(200)
                     else:
                         self._reply(409, "Une mission est en cours.")
@@ -263,17 +263,17 @@ class TelemetryServer:
             self._pending = request
             return True
 
-    def _request_blocked_reset(self) -> bool:
+    def _request_map_reset(self) -> bool:
         with self._lock:
             if self._busy or self._pending is not None:
                 return False
-            self._blocked_reset = True
+            self._map_reset = True
             return True
 
-    def take_blocked_reset(self) -> bool:
-        """Renvoie True une seule fois après une demande de déblocage des arêtes."""
+    def take_map_reset(self) -> bool:
+        """Renvoie True une seule fois après une demande de réinitialisation de la carte."""
         with self._lock:
-            requested, self._blocked_reset = self._blocked_reset, False
+            requested, self._map_reset = self._map_reset, False
             return requested
 
     def _request_stop(self) -> None:

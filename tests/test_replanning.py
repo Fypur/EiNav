@@ -486,7 +486,7 @@ def test_arete_conservee_entre_missions_puis_debloquee(served: tuple) -> None:
 
     assert _post(port, "/mission", MISSION) == 200
     _wait(lambda: _state(port)["blocked_edges"])
-    assert _post(port, "/blocked/reset", {}) == 409, "pas pendant une mission"
+    assert _post(port, "/map/reset", {}) == 409, "pas pendant une mission"
     _wait(lambda: _state(port)["state"] == "IDLE" and _state(port)["returned_home"])
     expected = [[[0, 1], [0, 2]]]
     assert _state(port)["blocked_edges"] == expected, "reste affichée à la fin de la mission"
@@ -498,8 +498,10 @@ def test_arete_conservee_entre_missions_puis_debloquee(served: tuple) -> None:
     assert frozenset(((0, 1), (0, 2))) not in _edges(route)
     _wait(lambda: _state(port)["state"] == "IDLE" and _state(port)["returned_home"])
 
-    assert _post(port, "/blocked/reset", {}) == 200
+    assert _post(port, "/map/reset", {}) == 200
     _wait(lambda: _state(port)["blocked_edges"] == [])
+    state = _state(port)
+    assert state["route"] == [] and state["start"] is None and not state["returned_home"], "carte vierge"
 
 
 def test_point_de_depart_isole_signale_sans_planter(served: tuple) -> None:
@@ -524,7 +526,7 @@ def test_point_de_depart_isole_signale_sans_planter(served: tuple) -> None:
     assert world.left == world.right == 0.0, "moteurs coupés"
 
     # Une fois les arêtes débloquées, la mission suivante aboutit.
-    assert _post(port, "/blocked/reset", {}) == 200
+    assert _post(port, "/map/reset", {}) == 200
     _wait(lambda: _state(port)["blocked_edges"] == [])
     assert _post(port, "/mission", {**order, "heading": state["heading"]}) == 200
     _wait(lambda: _state(port)["returned_home"] and _state(port)["state"] == "IDLE")

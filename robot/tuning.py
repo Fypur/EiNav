@@ -71,6 +71,9 @@ SETTINGS = (
             "Plus petit : le robot regarde plus loin.", 0.1, 0.9, 0.05),
     Setting("MIN_LINE_AREA", vision_utils, "Vision", "Surface minimale de ligne",
             "En dessous de cette surface, une tache blanche est ignorée.", 0, 2000, 10, "px", integer=True),
+    Setting("INTERSECTION_MIN_WIDTH_RATIO", vision_utils, "Vision", "Largeur d'un croisement",
+            "Largeur minimale de la bande blanche d'un croisement, en fraction de l'image. Tourne au milieu "
+            "d'une ligne : augmenter. Passe des croisements sans les voir : baisser.", 0.1, 1.0, 0.05),
 )
 
 _BY_KEY: Dict[str, Setting] = {setting.key: setting for setting in SETTINGS}

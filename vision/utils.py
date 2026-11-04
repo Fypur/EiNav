@@ -17,6 +17,10 @@ BOUNDARY = b"frame"
 ROI_TOP_RATIO = 0.6  # la zone d'intérêt commence à cette fraction de la hauteur de l'image
 BINARY_THRESHOLD = 140  # niveau de gris (0-255) au-dessus duquel un pixel fait partie de la ligne
 MIN_LINE_AREA = 50  # surface minimale (pixels) pour accepter une ligne
+# Largeur minimale de la bande blanche d'un croisement, en fraction de la largeur de l'image. Sur 227 images
+# réelles, une ligne en biais confondue avec un croisement ne dépasse pas 0,22, et un croisement centré commence
+# à 0,54. Un T en bord de grille, ligne décalée vers sa branche, descend vers 0,37 : d'où un seuil bas.
+INTERSECTION_MIN_WIDTH_RATIO = 0.3
 BLUR_KERNEL = (9, 9)  # dimensions impaires
 MORPH_KERNEL = (9, 9)
 

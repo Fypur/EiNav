@@ -53,8 +53,8 @@
   #halt:not(:disabled) { background:var(--off); border-color:var(--off); color:#fff; }
   #error { margin:8px 0 0; color:#FCA5A5; min-height:1.4em; }
   svg.picking { cursor:pointer; }
-  #blocked { margin-top:8px; padding-top:8px; border-top:1px solid var(--line); }
-  #blocked-list { margin:0 0 8px; color:#FCA5A5; font-size:.9rem; font-weight:600; }
+  #blocked-list { margin:8px 0 0; color:#FCA5A5; font-size:.9rem; font-weight:600; }
+  #reset-map { margin-top:8px; }
   #tuning { grid-column:1 / -1; padding:0; }
   #tuning > summary { display:flex; flex-wrap:wrap; align-items:center; gap:4px 10px; padding:12px; cursor:pointer;
                       font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
@@ -121,10 +121,8 @@
     <svg id="grid" role="img" aria-label="Position du robot sur la grille"></svg>
     <p class="legend">D : départ. A : arrivée. La flèche est sur la dernière intersection atteinte,
       le trait bleu est l'étape en cours. Barré de rouge : arête bloquée par un obstacle.</p>
-    <div id="blocked" hidden>
-      <p id="blocked-list" role="status"></p>
-      <button id="clear-blocked" type="button">Débloquer les arêtes</button>
-    </div>
+    <p id="blocked-list" role="status" hidden></p>
+    <button id="reset-map" type="button" disabled>Réinitialiser la carte</button>
   </section>
   <section id="camera">
     <h2>Image traitée</h2>
@@ -264,10 +262,10 @@
     $("go").disabled = !online || running || sending || (!lineMode && (!chosen || same));
     $("halt").disabled = !running;
     const blocked = online ? latest.blocked_edges : [];
-    $("blocked").hidden = blocked.length === 0;
+    $("blocked-list").hidden = blocked.length === 0;
     $("blocked-list").textContent = (blocked.length > 1 ? "Arêtes bloquées : " : "Arête bloquée : ")
       + blocked.map(([[ax, ay], [bx, by]]) => `(${ax}, ${ay}) – (${bx}, ${by})`).join(", ");
-    $("clear-blocked").disabled = running || sending;
+    $("reset-map").disabled = !online || running || sending;
     if (!sending && same) $("error").textContent = "Le départ et l'arrivée doivent être différents.";
     else if (!sending && $("error").dataset.same) $("error").textContent = "";
     $("error").dataset.same = same ? "1" : "";
@@ -314,7 +312,7 @@
     });
   }
   $("halt").addEventListener("click", () => command("stop", {}));
-  $("clear-blocked").addEventListener("click", () => command("blocked/reset", {}));
+  $("reset-map").addEventListener("click", () => command("map/reset", {}));
   for (const id of ["start", "destination"]) $(id).addEventListener("change", refreshControls);
 
   // Position du clic plutôt que l'élément touché : la grille est redessinée pendant le clic.
