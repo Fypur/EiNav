@@ -49,7 +49,7 @@ def MotorizationTest():
 # Main program
 ############################################
 
-car = arduino('/dev/ttyACM1')
+car = arduino('/dev/ttyACM0')
 connected = car.connect()
 if (connected == True):
     MotorizationTest()

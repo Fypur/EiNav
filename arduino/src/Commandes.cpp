@@ -21,6 +21,7 @@ extern MyServo frontservo;
 extern char feedback ;
 extern char commode ;
 extern bool ConnOn ;
+extern volatile unsigned long pulseDuration;
 
 extern void init_arduino() ;
 
@@ -242,7 +243,19 @@ void  INFRARED_TIME_code() {
 // question S,s : renvoie la valeur du capteur ultrasons
 /////////////////////////////////////////////////////////////////////
 void  ULTRASON_code() {
- // A COMPLETER
+  unsigned long duration;
+  noInterrupts();
+  duration = pulseDuration;
+  interrupts();
+  unsigned long distanceInCm = duration / 50;
+  if (distanceInCm > 200) {
+    distanceInCm = 200;
+  }
+  if (commode == 0) {
+    Serial.println(distanceInCm);
+  } else {
+    Ret2li(millis(), (int)distanceInCm);
+  }
 }
 
 /////////////////////////////////////////////////////////////////////
