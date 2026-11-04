@@ -181,7 +181,8 @@ def run_state_machine(
     processor: Optional[ImageProcessor] = None,
     telemetry: Optional[TelemetryServer] = None,
 ) -> Mission:
-    """Va de `start_pos` à `end_pos`, fait demi-tour et revient, sauf arrêt demandé par l'interface.
+    """Va de `start_pos` à `end_pos`, y fait un tour complet (la livraison), puis fait demi-tour
+    et revient, sauf arrêt demandé par l'interface.
 
     Renvoie la mission (et ses flags).
     """
@@ -206,6 +207,8 @@ def run_state_machine(
     action_start_time = connection.get_time()
     approach_start = 0.0
     approach_duration = utils.APPROACH_DURATION
+    delivery_half_turns = 0
+    state_after_delivery = RobotState.FOLLOWING
     # Empêche de détecter plusieurs fois la même intersection (dont celle de départ, si elle est visible)
     intersection_armed = False
 
@@ -278,7 +281,20 @@ def run_state_machine(
                         robot_dir = next_dir
                         mission.heading = next_dir
                         action_start_time = current_time
+                        if mission.destination_reached and not was_at_destination:
+                            # Le tour complet ramène le robot dans le sens d'arrivée : le demi-tour reste à faire.
+                            state_after_delivery = robot_state
+                            robot_state = RobotState.DELIVERING
+                            delivery_half_turns = utils.DELIVERY_HALF_TURNS
                         print("Nouvel état :", robot_state)
+
+            elif robot_state == RobotState.DELIVERING:
+                if controller.turn(current_time, False, action_start_time, half_turn=True):
+                    delivery_half_turns -= 1
+                    action_start_time = current_time
+                    if delivery_half_turns == 0:
+                        print("Livraison terminée.")
+                        robot_state = state_after_delivery
 
             elif robot_state == RobotState.TURNING_90:
                 if controller.turn(current_time, True, action_start_time):

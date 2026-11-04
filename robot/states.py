@@ -15,4 +15,5 @@ class RobotState(Enum):
     TURNING_90 = auto()
     TURNING_MINUS_90 = auto()
     TURNING_180 = auto()
+    DELIVERING = auto()  # tour complet sur le point de livraison, avant le retour
     STOPPED = auto()

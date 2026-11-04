@@ -227,11 +227,13 @@ def test_aller_retour_complet() -> None:
     states = [s.state for s in recorder.statuses]
     assert RobotState.TURNING_180.name in states
 
-    # Le demi-tour a lieu sur la destination, juste après la levée du flag.
+    # La livraison a lieu sur la destination, juste après la levée du flag, puis le demi-tour.
+    delivery = states.index(RobotState.DELIVERING.name)
+    assert recorder.statuses[delivery].position == (2, 2)
+    assert recorder.statuses[delivery].destination_reached
+    assert recorder.statuses[delivery - 1].destination_reached is False
     first_u_turn = states.index(RobotState.TURNING_180.name)
-    assert recorder.statuses[first_u_turn].position == (2, 2)
-    assert recorder.statuses[first_u_turn].destination_reached
-    assert recorder.statuses[first_u_turn - 1].destination_reached is False
+    assert first_u_turn > delivery and recorder.statuses[first_u_turn].position == (2, 2)
     assert recorder.statuses[-1].state == RobotState.STOPPED.name
     assert recorder.statuses[-1].returned_home
 
@@ -330,6 +332,84 @@ def test_chaque_virage_utilise_sa_duree(heading: Direction, state: RobotState, u
 
     monkeypatch.setattr(robot_utils, used, 2.0)
     assert steps_in_state() > reference, "cette durée allonge le virage"
+
+
+# --- Livraison : tour complet à destination ----------------------------------------------------
+
+class SpinSerial(FakeSerial):
+    """Rotation envoyée aux roues (> 0 : à droite), rangée par état du robot."""
+
+    def __init__(self, recorder: Recorder, dt: float) -> None:
+        super().__init__()
+        self.recorder = recorder
+        self.dt = dt
+        self.rotation: dict = {}
+
+    def send_wheel_speeds(self, fl: float, fr: float, rr: float, rl: float) -> None:
+        super().send_wheel_speeds(fl, fr, rr, rl)
+        if self.recorder.statuses and fl == -fr:
+            state = self.recorder.statuses[-1].state
+            self.rotation[state] = self.rotation.get(state, 0.0) + fl * self.dt
+
+
+def _delivery(start: tuple = (0, 0), end: tuple = (0, 2)) -> Tuple[Mission, Recorder, SpinSerial]:
+    recorder = Recorder()
+    connection = FakeConnection(dt=0.02)
+    serial = SpinSerial(recorder, connection.dt)
+    mission = run_state_machine(connection, serial, start, end, Direction.SOUTH,  # type: ignore[arg-type]
+                                processor=FakeProcessor(period=120), telemetry=recorder)  # type: ignore[arg-type]
+    return mission, recorder, serial
+
+
+def test_tour_complet_a_destination_avant_le_retour() -> None:
+    mission, recorder, serial = _delivery()
+    assert mission.returned_home and mission.position == (0, 0)
+    half_turn = robot_utils.TURN_SPEED * robot_utils.TURN_180_DURATION
+    # La fin d'un demi-tour se rattache à l'état suivant : on vérifie le total, puis la répartition.
+    assert serial.rotation[RobotState.DELIVERING.name] == pytest.approx(2 * half_turn, rel=0.05)
+    total = serial.rotation[RobotState.DELIVERING.name] + serial.rotation[RobotState.TURNING_180.name]
+    assert total == pytest.approx(3 * half_turn, rel=0.02), "360° de livraison + demi-tour du retour"
+
+
+def test_livraison_affichee_uniquement_pendant_le_tour() -> None:
+    _, recorder, _ = _delivery((0, 0), (0, 3))
+    delivering = [s for s in recorder.statuses if s.state == RobotState.DELIVERING.name]
+    assert delivering
+    assert {s.position for s in delivering} == {(0, 3)}, "seulement à destination, pas aux autres nœuds"
+    assert all(s.destination_reached and not s.returned_home for s in delivering)
+
+    states = [s.state for s in recorder.statuses]
+    entries = sum(1 for before, after in zip(states, states[1:])
+                  if after == RobotState.DELIVERING.name and before != after)
+    assert entries == 1, "une seule livraison par mission, pas de tour au retour sur A"
+    assert states[states.index(RobotState.DELIVERING.name) + len(delivering)] == RobotState.TURNING_180.name
+
+
+def test_duree_de_la_livraison_suit_le_reglage_du_demi_tour(monkeypatch: pytest.MonkeyPatch) -> None:
+    def spin_time() -> float:
+        _, recorder, _ = _delivery()
+        return sum(1 for s in recorder.statuses if s.state == RobotState.DELIVERING.name) * 0.02
+
+    reference = spin_time()
+    monkeypatch.setattr(robot_utils, "TURN_180_DURATION", robot_utils.TURN_180_DURATION + 1.0)
+    assert spin_time() == pytest.approx(reference + 2.0, abs=0.2)
+
+
+def test_arret_possible_pendant_la_livraison() -> None:
+    class StopDuringDelivery(Recorder):
+        def publish(self, status: object) -> None:
+            super().publish(status)
+            self.stop_requested = status.state == RobotState.DELIVERING.name  # type: ignore[attr-defined]
+
+    recorder, serial = StopDuringDelivery(), FakeSerial()
+    mission = run_state_machine(FakeConnection(), serial, (0, 0), (0, 1), Direction.SOUTH,  # type: ignore[arg-type]
+                                processor=FakeProcessor(), telemetry=recorder)  # type: ignore[arg-type]
+    assert mission.destination_reached and not mission.returned_home
+    assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
+
+
+def test_page_affiche_livraison_en_cours() -> None:
+    assert "Livraison en cours" in (ROOT / "frontend" / "live.html").read_text(encoding="utf-8")
 
 
 # --- Parcours en 8 ---------------------------------------------------------------------------

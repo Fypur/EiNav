@@ -146,6 +146,7 @@
     FOLLOWING: "Suivi de ligne", APPROACHING_INTERSECTION: "Approche d'intersection",
     STOP_ON_INTERSECTION: "Arrêt sur intersection", TURNING_90: "Rotation à gauche",
     TURNING_MINUS_90: "Rotation à droite", TURNING_180: "Demi-tour", STOPPED: "Arrêté",
+    DELIVERING: "Livraison en cours",
     IDLE: "En attente de démarrage",
   };
   const $ = (id) => document.getElementById(id);
@@ -328,7 +329,7 @@
         if (!settingsLoaded) loadSettings().catch(() => {});
         refreshControls();
         chip("link", "En direct", "on");
-        chip("state", STATE_LABEL[s.state] || s.state, "");
+        chip("state", STATE_LABEL[s.state] || s.state, s.state === "DELIVERING" ? "warn" : "");
         chip("position", s.position ? `Nœud (${s.position[0]}, ${s.position[1]})` : "Aucune mission", "");
         if (s.line_lost) chip("state", "Arrêt : ligne perdue", "off");
         else if (s.state === "IDLE" && s.start && !s.returned_home) chip("state", "Mission arrêtée", "off");

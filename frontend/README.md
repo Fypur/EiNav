@@ -31,7 +31,7 @@ Pour faire une livraison :
 
 1. choisir le départ, l'arrivée et l'orientation ;
 2. poser le robot sur le croisement de départ, dans l'orientation choisie (la caméra ne voit pas ce croisement : le robot s'y considère déjà arrivé) ;
-3. cliquer sur **Démarrer**. Le robot va à l'arrivée, fait demi-tour, revient au départ et attend l'ordre suivant.
+3. cliquer sur **Démarrer**. Le robot va à l'arrivée, y fait un tour complet (l'interface affiche « Livraison en cours »), fait demi-tour, revient au départ et attend l'ordre suivant.
 
 Pour suivre le parcours en 8 :
 
