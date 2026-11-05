@@ -50,8 +50,8 @@ def wait_for_mission(
             connection.publish_frame(processor.annotate(frame, detection))
             line_detected, is_intersection = detection.cx is not None, detection.is_intersection
         telemetry.publish(make_status(Mode.GRID, RobotState.IDLE, GRID_SIZE + 1, last_mission,
-                                    line_detected, is_intersection, line_lost, obstacle.status,
-                                    grid.blocked_edges))
+                                      line_detected, is_intersection, line_lost, obstacle.status,
+                                      grid.blocked_edges))
         request = telemetry.take_mission()
         if request is not None:
             return request
@@ -63,7 +63,6 @@ def serve_missions(
     serial: Serial,
     telemetry: TelemetryServer,
     processor: Optional[ImageProcessor] = None,
-    stop_at_straight_intersections: bool = False,
 ) -> None:
     """Exécute les ordres de l'interface, jusqu'à la fin du programme."""
     processor = processor or ImageProcessor()
@@ -82,8 +81,7 @@ def serve_missions(
                 line_lost = False
                 try:
                     last_mission = run_state_machine(connection, serial, request.start, request.destination,
-                                                     request.heading, processor, telemetry, grid,
-                                                     stop_at_straight_intersections=stop_at_straight_intersections)
+                                                     request.heading, processor, telemetry, grid)
                     line_lost = last_mission.line_lost
                 except ValueError as exc:  # destination coupée par des arêtes bloquées
                     print(exc)
@@ -195,7 +193,6 @@ def run_state_machine(
     processor: Optional[ImageProcessor] = None,
     telemetry: Optional[TelemetryServer] = None,
     grid: Optional[Grid] = None,
-    stop_at_straight_intersections: bool = True,
 ) -> Mission:
     """Va de `start_pos` à `end_pos`, y fait un tour complet (la livraison), puis fait demi-tour
     et revient, sauf arrêt demandé par l'interface.
@@ -233,7 +230,6 @@ def run_state_machine(
     blind_return = 0.0
     # Empêche de détecter plusieurs fois la même intersection (dont celle de départ, si elle est visible)
     intersection_armed = False
-    pending_next_dir: Optional[Direction] = None
 
     def publish(line_detected: bool = False, is_intersection: bool = False) -> None:
         if telemetry is not None:
@@ -315,7 +311,6 @@ def run_state_machine(
                     robot_state = RobotState.APPROACHING_INTERSECTION
                     approach_start = controller.drive_time
                     approach_duration = controller.approach_duration(utils.APPROACH_DURATION)
-                    pending_next_dir = None
                     print("Intersection détectée !")
 
                 _steer(controller, detection, current_time)
@@ -326,35 +321,13 @@ def run_state_machine(
                 if controller.drive_time - approach_start > approach_duration:
                     robot_state = RobotState.STOP_ON_INTERSECTION
                     action_start_time = current_time
-                    pending_next_dir = None
                     print("Arrivée au centre de l'intersection.")
 
             elif robot_state == RobotState.STOP_ON_INTERSECTION:
-                if pending_next_dir is None:
-                    was_at_destination = mission.destination_reached
-                    pending_next_dir = mission.on_intersection()
-                    controller.travel = 0.0
-
-                    turn_state = get_turn_state(robot_dir, pending_next_dir) if pending_next_dir is not None else RobotState.STOPPED
-
-                    # Si on va tout droit, que l'on n'est pas à la destination, et que le paramètre désactive l'arrêt :
-                    if not stop_at_straight_intersections and turn_state == RobotState.FOLLOWING and not mission.destination_reached:
-                        print("Intersection intermédiaire franchie tout droit (sans arrêt).")
-                        if pending_next_dir is None:
-                            robot_state = RobotState.STOPPED
-                        else:
-                            robot_dir = pending_next_dir
-                            mission.heading = pending_next_dir
-                            robot_state = RobotState.FOLLOWING
-                            pending_next_dir = None
-                        publish(cx is not None, is_intersection)
-                        continue
-
-                # Arrêt normal (pour les virages ou la destination)
                 if controller.stop(current_time):
                     was_at_destination = mission.destination_reached
-                    next_dir = pending_next_dir
-                    pending_next_dir = None
+                    next_dir = mission.on_intersection()
+                    controller.travel = 0.0
 
                     if mission.destination_reached and not was_at_destination:
                         print("Destination atteinte ! Demi-tour, retour au point de départ.")
