@@ -1,4 +1,4 @@
-from __future__ import annotations
+$from __future__ import annotations
 
 from typing import NamedTuple, Optional, Tuple
 
@@ -70,9 +70,9 @@ class ImageProcessor:
                 touches_left = np.any(morphed[:, 0] > 0)
                 touches_right = np.any(morphed[:, roi_w - 1] > 0)
 
-                # Une ligne en biais qui passe par un coin touche aussi le haut, le bas et un côté,
+                # Une ligne en biais qui passe par un coin touche aussi le bas et un côté,
                 # donc on vérifie en plus la large bande horizontale du croisement
-                if touches_top and touches_bottom and (touches_left or touches_right):
+                if touches_bottom and (touches_left or touches_right):
                     # Par rapport à l'image et pas à la zone : dans une zone étroite, une simple ligne serait assez large
                     is_intersection = _widest_run(morphed) >= utils.INTERSECTION_MIN_WIDTH_RATIO * w
 
