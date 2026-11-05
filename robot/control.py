@@ -85,6 +85,11 @@ class Control:
         """Suit la ligne : `error` vaut -1 (ligne à gauche) à 1 (ligne à droite)."""
         self._drive(now, utils.BASE_SPEED, 0.0, correction=error * utils.KP)
 
+    def spin(self, now: float, left: bool) -> None:
+        """Pivote sur place pour retrouver la ligne."""
+        speed = utils.TURN_SPEED
+        self._drive(now, 0.0, -speed if left else speed)
+
     def turn(self, now: float, left: bool, start_time: float, half_turn: bool = False) -> bool:
         """Tourne sur place, de 90° ou 180°. Renvoie True quand la rotation est finie et le robot arrêté."""
         duration = utils.TURN_180_DURATION if half_turn else utils.TURN_90_DURATION

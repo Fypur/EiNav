@@ -147,7 +147,7 @@
   const STEP = 60, MARGIN = 40;
   const ANGLE = { NORTH: 0, EAST: 90, SOUTH: 180, WEST: 270 };
   const STATE_LABEL = {
-    FOLLOWING: "Suivi de ligne", APPROACHING_INTERSECTION: "Approche d'intersection",
+    FOLLOWING: "Suivi de ligne", SEARCHING_LINE: "Recherche de ligne", APPROACHING_INTERSECTION: "Approche d'intersection",
     STOP_ON_INTERSECTION: "Arrêt sur intersection", TURNING_90: "Rotation à gauche",
     TURNING_MINUS_90: "Rotation à droite", TURNING_180: "Demi-tour", STOPPED: "Arrêté",
     DELIVERING: "Livraison en cours",
@@ -348,7 +348,7 @@
         if (!settingsLoaded) loadSettings().catch(() => {});
         refreshControls();
         chip("link", "En direct", "on");
-        chip("state", STATE_LABEL[s.state] || s.state, s.state === "DELIVERING" ? "warn" : "");
+        chip("state", STATE_LABEL[s.state] || s.state, (s.state === "DELIVERING" || s.state === "SEARCHING_LINE") ? "warn" : "");
         chip("position", s.position ? `Nœud (${s.position[0]}, ${s.position[1]})` : "Aucune mission", "");
         if (s.line_lost) chip("state", "Arrêt : ligne perdue", "off");
         else if (s.no_route) chip("state", "Arrêt : aucun chemin", "off");

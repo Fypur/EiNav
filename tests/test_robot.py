@@ -8,7 +8,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from unittest import mock
 
 import numpy as np
@@ -516,8 +516,9 @@ def test_compteur_demarre_a_l_entree_en_suivi() -> None:
     mission = run_state_machine(connection, FakeSerial(), (0, 0), (0, 2), Direction.NORTH,  # type: ignore[arg-type]
                                 processor=LineScriptProcessor(lambda i: False), telemetry=recorder)  # type: ignore[arg-type]
     assert mission.line_lost
-    following = sum(1 for s in recorder.statuses if s.state == RobotState.FOLLOWING.name)
-    assert robot_utils.LINE_LOST_TIMEOUT < following * connection.dt <= robot_utils.LINE_LOST_TIMEOUT + 3 * connection.dt
+    searching = sum(1 for s in recorder.statuses if s.state == RobotState.SEARCHING_LINE.name)
+    assert robot_utils.LINE_LOST_TIMEOUT < searching * connection.dt <= robot_utils.LINE_LOST_TIMEOUT + 3 * connection.dt
+    assert RobotState.SEARCHING_LINE.name in [s.state for s in recorder.statuses]
 
 
 def test_huit_s_arrete_si_la_ligne_est_perdue() -> None:
@@ -534,6 +535,93 @@ def test_huit_continue_si_la_ligne_revient() -> None:
     line_lost = run_figure_eight(connection, FakeSerial(), LineScriptProcessor(lambda i: not 20 < i <= 20 + _brief_loss()),  # type: ignore[arg-type]
                                  Recorder())  # type: ignore[arg-type]
     assert line_lost is False
+
+
+class SideScriptProcessor(FakeProcessor):
+    """Ligne vue à une abscisse spécifique (cx) pendant certains pas, puis None."""
+    def __init__(self, cx_by_call: Dict[int, Optional[int]], default_cx: Optional[int] = None) -> None:
+        super().__init__()
+        self.cx_by_call = cx_by_call
+        self.default_cx = default_cx
+
+    def process_frame(self, image_bgr: np.ndarray) -> LineDetection:
+        self.calls += 1
+        cx = self.cx_by_call.get(self.calls, self.default_cx)
+        return LineDetection(cx, False, 160, 76, np.zeros((52, 160), np.uint8))
+
+
+def test_huit_memorise_ligne_a_gauche_et_tourne_a_gauche() -> None:
+    """Si la ligne disparaît à gauche (cx < 80), le robot passe en SEARCHING_LINE et pivote à gauche."""
+    cx_map = {i: 30 for i in range(1, 11)}
+    processor = SideScriptProcessor(cx_map, default_cx=None)
+    connection, serial = FakeConnection(max_steps=15), FakeSerial()
+    recorder = Recorder()
+    run_figure_eight(connection, serial, processor, recorder)  # type: ignore[arg-type]
+
+    states = [s.state for s in recorder.statuses]
+    assert RobotState.SEARCHING_LINE.name in states
+    assert any(cmd[0] < cmd[1] for cmd in serial.commands)
+
+
+def test_huit_memorise_ligne_a_droite_et_tourne_a_droite() -> None:
+    """Si la ligne disparaît à droite (cx > 80), le robot passe en SEARCHING_LINE et pivote à droite."""
+    cx_map = {i: 130 for i in range(1, 11)}
+    processor = SideScriptProcessor(cx_map, default_cx=None)
+    connection, serial = FakeConnection(max_steps=15), FakeSerial()
+    recorder = Recorder()
+    run_figure_eight(connection, serial, processor, recorder)  # type: ignore[arg-type]
+
+    states = [s.state for s in recorder.statuses]
+    assert RobotState.SEARCHING_LINE.name in states
+    assert any(cmd[0] > cmd[1] for cmd in serial.commands)
+
+
+def test_huit_retrouve_la_ligne_et_reprend_following() -> None:
+    """En mode huit, la ligne disparaît (SEARCHING_LINE) puis réapparaît (retour en FOLLOWING)."""
+    cx_map = {i: 50 for i in range(1, 11)}
+    cx_map.update({i: None for i in range(11, 15)})
+    cx_map.update({i: 80 for i in range(15, 30)})
+    processor = SideScriptProcessor(cx_map, default_cx=80)
+    connection = FakeConnection(max_steps=25)
+    recorder = Recorder()
+    line_lost = run_figure_eight(connection, FakeSerial(), processor, recorder)  # type: ignore[arg-type]
+    assert line_lost is False
+    states = [s.state for s in recorder.statuses]
+    assert RobotState.SEARCHING_LINE.name in states
+    assert states[-1] == RobotState.FOLLOWING.name
+
+
+def test_grille_apres_virage_cherche_ligne_et_reprend_following() -> None:
+    """Après un virage, si la ligne n'est pas immédiatement en vue, le robot passe en SEARCHING_LINE."""
+    call_count = 0
+    class AfterTurnProcessor(FakeProcessor):
+        def process_frame(self, image_bgr: np.ndarray) -> LineDetection:
+            nonlocal call_count
+            call_count += 1
+            cx = None if 44 <= call_count <= 47 else 80
+            return LineDetection(cx, False, 160, 76, np.zeros((52, 160), np.uint8))
+
+    connection = FakeConnection(max_steps=50)
+    recorder = Recorder()
+    mission = run_state_machine(connection, FakeSerial(), (0, 0), (0, 2), Direction.WEST,  # type: ignore[arg-type]
+                                processor=AfterTurnProcessor(), telemetry=recorder)  # type: ignore[arg-type]
+    states = [s.state for s in recorder.statuses]
+    assert RobotState.SEARCHING_LINE.name in states
+    assert states[-1] == RobotState.FOLLOWING.name
+    assert not mission.line_lost
+
+
+def test_grille_apres_virage_memorise_sens_et_arrete_apres_timeout() -> None:
+    """Après un virage à gauche, si la ligne n'est jamais trouvée, recherche vers la gauche puis arrêt."""
+    processor = LineScriptProcessor(lambda i: i <= 2)
+    recorder = Recorder()
+    serial = FakeSerial()
+    mission = run_state_machine(FakeConnection(max_steps=200), serial, (0, 0), (0, 2), Direction.WEST,  # type: ignore[arg-type]
+                                processor=processor, telemetry=recorder)  # type: ignore[arg-type]
+    assert mission.line_lost
+    states = [s.state for s in recorder.statuses]
+    assert RobotState.SEARCHING_LINE.name in states
+    assert any(cmd[0] < cmd[1] for cmd in serial.commands)
 
 
 # --- Vision ----------------------------------------------------------------------------------

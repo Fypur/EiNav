@@ -292,3 +292,21 @@ def test_camera_pi_importable_comme_script(tmp_path: Path) -> None:
     )
     subprocess.run([sys.executable, "-c", code, str(ROOT / "vision"), str(ROOT / "vision" / "camera_pi.py")],
                    check=True, cwd=str(tmp_path))
+
+
+def test_reglage_line_lost_timeout() -> None:
+    """Le paramètre LINE_LOST_TIMEOUT est configurable et exposé via tuning."""
+    desc = {entry["key"]: entry for entry in tuning.describe()}
+    assert "LINE_LOST_TIMEOUT" in desc
+    assert desc["LINE_LOST_TIMEOUT"]["min"] == 0.1
+    assert desc["LINE_LOST_TIMEOUT"]["max"] == 10.0
+    assert desc["LINE_LOST_TIMEOUT"]["unit"] == "s"
+
+    before = robot_utils.LINE_LOST_TIMEOUT
+    try:
+        tuning.update({"LINE_LOST_TIMEOUT": 2.5})
+        assert robot_utils.LINE_LOST_TIMEOUT == 2.5
+        tuning.reset(["LINE_LOST_TIMEOUT"])
+        assert robot_utils.LINE_LOST_TIMEOUT == before
+    finally:
+        robot_utils.LINE_LOST_TIMEOUT = before

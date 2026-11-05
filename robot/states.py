@@ -10,6 +10,7 @@ class Mode(Enum):
 class RobotState(Enum):
     IDLE = auto()  # moteurs coupés, en attente d'un ordre de l'interface
     FOLLOWING = auto()
+    SEARCHING_LINE = auto()  # recherche de la ligne perdue
     APPROACHING_INTERSECTION = auto()
     STOP_ON_INTERSECTION = auto()
     TURNING_90 = auto()

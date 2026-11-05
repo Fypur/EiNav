@@ -92,15 +92,28 @@ def serve_missions(
 
 
 class LineLossWatch:
-    """Signale, pendant le suivi, une ligne restée invisible plus de LINE_LOST_TIMEOUT sans interruption.
+    """Surveille la perte de ligne et mémorise la direction de la dernière ligne vue.
 
+    Signale, pendant le suivi ou la recherche, une ligne restée invisible plus de LINE_LOST_TIMEOUT.
+    Mémorise le côté où la ligne a été vue (gauche ou droite) pour orienter la recherche.
     Le suivi ne se termine que sur une image où la ligne est vue : le compteur est donc
     toujours à zéro à la reprise suivante, et un virage ou une traversée n'est jamais compté.
     `now` est `Control.drive_time` : le temps passé bloqué devant un obstacle ne compte pas non plus.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, default_left: bool = True) -> None:
         self._lost_since: Optional[float] = None
+        self.last_turn_left: bool = default_left
+
+    def update(self, detection: LineDetection) -> None:
+        """Mémorise la position de la ligne si elle est visible."""
+        if detection.cx is not None:
+            half_width = detection.roi_w / 2
+            if detection.cx != half_width:
+                self.last_turn_left = detection.cx < half_width
+
+    def reset_timer(self) -> None:
+        self._lost_since = None
 
     def is_lost(self, now: float, line_seen: bool) -> bool:
         if line_seen:
@@ -156,25 +169,34 @@ def run_figure_eight(
 
             detection = processor.process_frame(frame)
             connection.publish_frame(processor.annotate(frame, detection))
+            if detection.cx is not None:
+                line_watch.update(detection)
 
-            if robot_state == RobotState.FOLLOWING:
-                if line_watch.is_lost(controller.drive_time, detection.cx is not None):
-                    print("Ligne perdue : arrêt du robot.")
-                    return True
+            if robot_state in (RobotState.FOLLOWING, RobotState.SEARCHING_LINE):
+                if detection.cx is not None:
+                    robot_state = RobotState.FOLLOWING
+                    line_watch.reset_timer()
 
-                if not detection.is_intersection:
-                    intersection_armed = True
-                if detection.is_intersection and intersection_armed:
-                    intersection_armed = False
-                    robot_state = RobotState.APPROACHING_INTERSECTION
-                    crossing_start = controller.drive_time
-                    crossing_duration = controller.approach_duration(utils.APPROACH_DURATION)
-                _steer(controller, detection, current_time)
+                    if not detection.is_intersection:
+                        intersection_armed = True
+                    if detection.is_intersection and intersection_armed:
+                        intersection_armed = False
+                        robot_state = RobotState.APPROACHING_INTERSECTION
+                        crossing_start = controller.drive_time
+                        crossing_duration = controller.approach_duration(utils.APPROACH_DURATION)
+                    _steer(controller, detection, current_time)
+                else:
+                    robot_state = RobotState.SEARCHING_LINE
+                    if line_watch.is_lost(controller.drive_time, False):
+                        print("Ligne perdue : arrêt du robot.")
+                        return True
+                    controller.spin(current_time, line_watch.last_turn_left)
             else:
                 # Tout droit : la correction suivrait l'autre branche du croisement.
                 controller.forward(current_time)
                 if controller.drive_time - crossing_start > crossing_duration:
                     robot_state = RobotState.FOLLOWING
+                    line_watch.reset_timer()
 
             telemetry.publish(make_status(Mode.HUIT, robot_state, GRID_SIZE + 1, None,
                                           detection.cx is not None, detection.is_intersection,
@@ -230,6 +252,7 @@ def run_state_machine(
     blind_return = 0.0
     # Empêche de détecter plusieurs fois la même intersection (dont celle de départ, si elle est visible)
     intersection_armed = False
+    seeking_after_turn = False
 
     def publish(line_detected: bool = False, is_intersection: bool = False) -> None:
         if telemetry is not None:
@@ -256,8 +279,10 @@ def run_state_machine(
             detection = processor.process_frame(frame)
             connection.publish_frame(processor.annotate(frame, detection))
             cx, is_intersection = detection.cx, detection.is_intersection
+            if cx is not None:
+                line_watch.update(detection)
 
-            on_edge = robot_state in (RobotState.FOLLOWING, RobotState.APPROACHING_INTERSECTION)
+            on_edge = robot_state in (RobotState.FOLLOWING, RobotState.SEARCHING_LINE, RobotState.APPROACHING_INTERSECTION)
             if not on_edge or obstacle.status.state != ObstacleState.BLOCKED:
                 blocked_since = None
             elif blocked_since is None:
@@ -284,6 +309,7 @@ def run_state_machine(
                     robot_dir = robot_dir.opposite
                     mission.heading = robot_dir
                     robot_state = RobotState.TURNING_180
+                    line_watch.last_turn_left = False
                     action_start_time = current_time
                     # La caméra voit à la distance parcourue pendant l'approche, pas plus près.
                     seen_from = utils.FORWARD_SPEED * utils.APPROACH_DURATION
@@ -296,24 +322,55 @@ def run_state_machine(
                 publish(cx is not None, is_intersection)
                 continue
 
-            if robot_state == RobotState.FOLLOWING:
-                if line_watch.is_lost(controller.drive_time, cx is not None):
-                    print("Ligne perdue : arrêt du robot.")
-                    mission.line_lost = True
-                    break
+            if robot_state in (RobotState.FOLLOWING, RobotState.SEARCHING_LINE):
+                if seeking_after_turn:
+                    if cx is not None:
+                        seeking_after_turn = False
+                        robot_state = RobotState.FOLLOWING
+                        line_watch.reset_timer()
 
-                # Réarmement après avoir quitté complètement l'intersection
-                if not is_intersection:
-                    intersection_armed = True
+                        # Réarmement après avoir quitté complètement l'intersection
+                        if not is_intersection:
+                            intersection_armed = True
 
-                if is_intersection and intersection_armed:
-                    intersection_armed = False
-                    robot_state = RobotState.APPROACHING_INTERSECTION
-                    approach_start = controller.drive_time
-                    approach_duration = controller.approach_duration(utils.APPROACH_DURATION)
-                    print("Intersection détectée !")
+                        if is_intersection and intersection_armed:
+                            intersection_armed = False
+                            robot_state = RobotState.APPROACHING_INTERSECTION
+                            approach_start = controller.drive_time
+                            approach_duration = controller.approach_duration(utils.APPROACH_DURATION)
+                            print("Intersection détectée !")
 
-                _steer(controller, detection, current_time)
+                        _steer(controller, detection, current_time)
+                    else:
+                        robot_state = RobotState.SEARCHING_LINE
+                        if line_watch.is_lost(controller.drive_time, False):
+                            print("Ligne perdue : arrêt du robot.")
+                            mission.line_lost = True
+                            break
+                        controller.spin(current_time, line_watch.last_turn_left)
+                else:
+                    if cx is not None:
+                        robot_state = RobotState.FOLLOWING
+                        line_watch.reset_timer()
+
+                        # Réarmement après avoir quitté complètement l'intersection
+                        if not is_intersection:
+                            intersection_armed = True
+
+                        if is_intersection and intersection_armed:
+                            intersection_armed = False
+                            robot_state = RobotState.APPROACHING_INTERSECTION
+                            approach_start = controller.drive_time
+                            approach_duration = controller.approach_duration(utils.APPROACH_DURATION)
+                            print("Intersection détectée !")
+
+                        _steer(controller, detection, current_time)
+                    else:
+                        if line_watch.is_lost(controller.drive_time, False):
+                            print("Ligne perdue : arrêt du robot.")
+                            mission.line_lost = True
+                            break
+                        _steer(controller, detection, current_time)
 
             elif robot_state == RobotState.APPROACHING_INTERSECTION:
                 controller.forward(current_time)
@@ -350,6 +407,13 @@ def run_state_machine(
                         robot_dir = next_dir
                         mission.heading = next_dir
                         action_start_time = current_time
+                        if robot_state == RobotState.TURNING_90:
+                            line_watch.last_turn_left = True
+                        elif robot_state in (RobotState.TURNING_MINUS_90, RobotState.TURNING_180):
+                            line_watch.last_turn_left = False
+                        elif robot_state == RobotState.FOLLOWING:
+                            line_watch.reset_timer()
+                            seeking_after_turn = False
                         if mission.destination_reached and not was_at_destination:
                             # Le tour complet ramène le robot dans le sens d'arrivée : le demi-tour reste à faire.
                             state_after_delivery = robot_state
@@ -364,26 +428,40 @@ def run_state_machine(
                     if delivery_half_turns == 0:
                         print("Livraison terminée.")
                         robot_state = state_after_delivery
+                        if robot_state == RobotState.TURNING_90:
+                            line_watch.last_turn_left = True
+                        elif robot_state in (RobotState.TURNING_MINUS_90, RobotState.TURNING_180):
+                            line_watch.last_turn_left = False
+                        elif robot_state == RobotState.FOLLOWING:
+                            line_watch.reset_timer()
+                            seeking_after_turn = False
 
             elif robot_state == RobotState.TURNING_90:
                 if controller.turn(current_time, True, action_start_time):
                     print("Rotation gauche terminée.")
                     robot_state = RobotState.FOLLOWING
+                    line_watch.reset_timer()
+                    seeking_after_turn = True
 
             elif robot_state == RobotState.TURNING_MINUS_90:
                 if controller.turn(current_time, False, action_start_time):
                     print("Rotation droite terminée.")
                     robot_state = RobotState.FOLLOWING
+                    line_watch.reset_timer()
+                    seeking_after_turn = True
 
             elif robot_state == RobotState.TURNING_180:
                 if controller.turn(current_time, False, action_start_time, half_turn=True):
                     print("Demi-tour terminé.")
                     robot_state = RobotState.FOLLOWING
+                    line_watch.reset_timer()
+                    seeking_after_turn = True
                     if blind_return > 0.0:
                         robot_state = RobotState.APPROACHING_INTERSECTION
                         approach_start = controller.drive_time
                         approach_duration = blind_return
                         blind_return = 0.0
+                        seeking_after_turn = False
 
             elif robot_state == RobotState.STOPPED:
                 controller.halt()

@@ -51,6 +51,8 @@ SETTINGS = (
     Setting("TIME_STEP_MS", connections_utils, "Suivi de ligne", "Période de la boucle",
             "Temps d'attente entre deux images traitées, sur le robot réel. Plus court : "
             "réagit plus vite, mais charge davantage le Pi.", 10, 200, 1, "ms", integer=True),
+    Setting("LINE_LOST_TIMEOUT", robot_utils, "Suivi de ligne", "Délai de recherche de ligne",
+            "Temps maximal sans voir la ligne avant l'arrêt complet du robot.", 0.1, 10.0, 0.1, "s"),
     Setting("APPROACH_DURATION", robot_utils, "Croisements", "Durée d'approche",
             "Temps pour atteindre le centre du croisement après l'avoir détecté. "
             "Le robot s'arrête trop tôt : augmenter.", 0.0, 3.0, 0.05, "s"),
