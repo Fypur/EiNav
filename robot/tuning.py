@@ -66,16 +66,9 @@ SETTINGS = (
     Setting("DETOUR_SPEED", robot_utils, "Après un obstacle", "Vitesse réduite",
             "Vitesse sur la ligne pendant le retour vers le dernier croisement, après le demi-tour.",
             0.02, 1.0, 0.01),
-    Setting("DETOUR_TURN_LEFT_DURATION", robot_utils, "Après un obstacle", "Durée de la rotation à gauche",
-            "Rotation de 90° à l'arrivée au croisement, après le retour à vitesse réduite.",
-            0.1, 5.0, 0.05, "s"),
-    Setting("DETOUR_TURN_RIGHT_DURATION", robot_utils, "Après un obstacle", "Durée de la rotation à droite",
-            "Rotation de 90° à l'arrivée au croisement, après le retour à vitesse réduite.",
-            0.1, 5.0, 0.05, "s"),
-    Setting("DETOUR_TURN_180_DURATION", robot_utils, "Après un obstacle", "Durée du demi-tour",
-            "Demi-tour à l'arrivée au croisement, après le retour à vitesse réduite. Pas le demi-tour "
-            "fait devant l'obstacle, qui utilise la durée de la section Croisements.",
-            0.1, 10.0, 0.05, "s"),
+    Setting("DETOUR_APPROACH_DURATION", robot_utils, "Après un obstacle", "Durée d'approche après obstacle",
+            "Temps pour atteindre le centre du croisement quand le robot y revient à vitesse réduite, "
+            "après l'avoir détecté. Le robot s'arrête trop tôt : augmenter.", 0.0, 3.0, 0.05, "s"),
     Setting("BINARY_THRESHOLD", vision_utils, "Vision", "Seuil de blanc",
             "Niveau de gris à partir duquel un pixel fait partie de la ligne. "
             "Baisser si la ligne n'est pas vue, monter si le sol passe en vert.",

@@ -16,7 +16,6 @@ from connections.base import RobotConnection
 from planning.direction import Direction
 from planning.navigation import Grid, Mission, Navigation
 from robot import tuning, utils
-from robot.control import Control
 from robot.state_machine import run_state_machine, serve_missions
 from robot.states import RobotState
 from robot.telemetry import TelemetryServer
@@ -253,16 +252,16 @@ class SpeedLog(Recorder):
     def speeds(self, state: str, blocked: bool) -> List[float]:
         return [speed for name, speed, _, cut in self.log if name == state and cut == blocked]
 
-    def rotations(self) -> List[Tuple[str, float]]:
-        """Rotations après le blocage de l'arête, avec leur durée : [(état, secondes), ...]."""
-        result: List[Tuple[str, float]] = []
+    def durations(self, state: RobotState) -> List[float]:
+        """Durée de chaque passage dans cet état après le blocage de l'arête, en secondes."""
+        result: List[float] = []
         previous, started = "", 0.0
         for name, _, t, cut in self.log:
             if not cut:
                 continue
             if name != previous:
-                if previous.startswith("TURNING"):
-                    result.append((previous, t - started))
+                if previous == state.name:
+                    result.append(t - started)
                 previous, started = name, t
         return result
 
@@ -277,6 +276,9 @@ def _logged(start: Tuple[int, int], end: Tuple[int, int], obstacle: Tuple[float,
                                 grid=Grid())
     assert mission.destination_reached and mission.returned_home
     return mission, log
+
+
+APPROACHING = RobotState.APPROACHING_INTERSECTION
 
 
 def _segment_after_u_turn(log: SpeedLog) -> List[Tuple[str, float]]:
@@ -327,72 +329,65 @@ def test_le_freinage_devant_un_obstacle_reste_prioritaire() -> None:
     assert RobotState.TURNING_180.name in [s.state for s in recorder.statuses]
 
 
-@pytest.mark.parametrize("start,end,state,key", [
-    ((0, 0), (0, 2), RobotState.TURNING_MINUS_90, "DETOUR_TURN_RIGHT_DURATION"),
-    ((4, 0), (4, 2), RobotState.TURNING_90, "DETOUR_TURN_LEFT_DURATION"),
-])
-def test_rotation_apres_le_retour_utilise_son_propre_reglage(start: Tuple[int, int], end: Tuple[int, int],
-                                                             state: RobotState, key: str) -> None:
-    obstacle = (start[0], 1.5)
-    _, short = _logged(start, end, obstacle, **{key: 1.0})
-    _, long = _logged(start, end, obstacle, **{key: 1.8})
-    short_turns, long_turns = short.rotations(), long.rotations()
-    assert short_turns[0][0] == RobotState.TURNING_180.name, "d'abord le demi-tour devant l'obstacle"
-    assert short_turns[0][1] == pytest.approx(long_turns[0][1], abs=0.15), "pas concerné par le réglage"
-    assert short_turns[1][0] == state.name
-    assert long_turns[1][1] - short_turns[1][1] == pytest.approx(0.8, abs=0.15)
-    # Les rotations suivantes reviennent aux durées normales
-    for (name_a, time_a), (name_b, time_b) in zip(short_turns[2:], long_turns[2:]):
-        assert name_a == name_b and time_a == pytest.approx(time_b, abs=0.15)
+FAR = ((0, 0), (0, 3), (0, 1.9))  # obstacle loin du noeud : retour avec la caméra, à vitesse stabilisée
 
 
-def test_rotation_apres_le_retour_ignore_la_duree_normale() -> None:
-    _, normal = _logged((0, 0), (0, 2), (0, 1.5), TURN_90_DURATION=1.0)
-    _, other = _logged((0, 0), (0, 2), (0, 1.5), TURN_90_DURATION=1.3)
-    assert normal.rotations()[1][1] == pytest.approx(other.rotations()[1][1], abs=0.15)
-    assert other.rotations()[2][1] - normal.rotations()[2][1] == pytest.approx(0.3, abs=0.15), "rotation suivante"
+def test_approche_apres_obstacle_utilise_son_propre_reglage() -> None:
+    _, short = _logged(*FAR, DETOUR_APPROACH_DURATION=0.6)
+    _, long = _logged(*FAR, DETOUR_APPROACH_DURATION=1.2)
+    short_times, long_times = short.durations(APPROACHING), long.durations(APPROACHING)
+    assert long_times[0] - short_times[0] == pytest.approx(0.6, abs=0.15)
+    assert short_times[1] == pytest.approx(long_times[1], abs=0.15), "l'approche suivante revient à la durée normale"
 
 
-def test_demi_tour_devant_l_obstacle_garde_la_duree_normale() -> None:
-    """Il a lieu avant le retour à vitesse réduite, donc le réglage à part ne le concerne pas."""
-    _, short = _logged((0, 0), (0, 2), (0, 1.5), DETOUR_TURN_180_DURATION=1.0)
-    _, long = _logged((0, 0), (0, 2), (0, 1.5), DETOUR_TURN_180_DURATION=2.5)
-    assert short.rotations()[0][0] == RobotState.TURNING_180.name
-    assert short.rotations()[0][1] == pytest.approx(long.rotations()[0][1], abs=0.15)
+def test_approche_apres_obstacle_tient_compte_de_la_rampe() -> None:
+    """Le robot arrive à DETOUR_SPEED : il freine moins vite que FORWARD_SPEED, comme une approche normale."""
+    _, log = _logged(*FAR, DETOUR_SPEED=0.2, DETOUR_APPROACH_DURATION=1.2)
+    ramp = 0.2 * utils.RAMP_TIME_CONSTANT / utils.FORWARD_SPEED
+    assert log.durations(APPROACHING)[0] == pytest.approx(1.2 - ramp, abs=0.15)
 
 
-def test_retour_a_l_aveugle_utilise_aussi_les_durees_a_part() -> None:
+def test_approche_apres_obstacle_ignore_la_duree_normale() -> None:
+    _, normal = _logged(*FAR, APPROACH_DURATION=0.6)
+    _, other = _logged(*FAR, APPROACH_DURATION=1.2)
+    assert normal.durations(APPROACHING)[0] == pytest.approx(other.durations(APPROACHING)[0], abs=0.15)
+    assert other.durations(APPROACHING)[1] - normal.durations(APPROACHING)[1] == pytest.approx(0.6, abs=0.15)
+
+
+def test_approche_apres_obstacle_change_l_arret_sur_le_noeud() -> None:
+    """Le réglage déplace vraiment le point d'arrêt du robot sur le croisement."""
+    def stop_offset(duration: float) -> float:
+        tuning.update({"DETOUR_APPROACH_DURATION": duration})
+        world = World((0, 0), Direction.SOUTH, obstacles=[(0, 1.5)])
+        _, watch, _ = _watched(world, (0, 1))
+        assert watch.offset is not None
+        return watch.offset
+
+    assert stop_offset(utils.APPROACH_DURATION) < 3.0, "par défaut, au centre"
+    assert stop_offset(utils.APPROACH_DURATION + 1.0) > 5.0, "plus longtemps, il dépasse le centre"
+
+
+def test_retour_a_l_aveugle_ne_depend_pas_du_reglage() -> None:
+    """Pas de détection dans ce cas : le robot refait la distance parcourue."""
     near = (0, 1 + 24.0 / SPACING)
-    _, short = _logged((0, 0), (0, 2), near, DETOUR_TURN_RIGHT_DURATION=1.0)
-    _, long = _logged((0, 0), (0, 2), near, DETOUR_TURN_RIGHT_DURATION=1.8)
-    assert long.rotations()[1][1] - short.rotations()[1][1] == pytest.approx(0.8, abs=0.15)
+    _, short = _logged((0, 0), (0, 2), near, DETOUR_APPROACH_DURATION=0.3)
+    _, long = _logged((0, 0), (0, 2), near, DETOUR_APPROACH_DURATION=1.5)
+    assert short.durations(APPROACHING)[0] == pytest.approx(long.durations(APPROACHING)[0], abs=0.15)
 
 
-def test_sans_retour_les_durees_normales_s_appliquent() -> None:
+def test_sans_retour_la_duree_normale_s_applique() -> None:
     """Obstacle vu depuis le noeud de départ : le robot n'a pas bougé, donc pas de parcours à vitesse réduite."""
     obstacle = (0, 18.0 / SPACING)
-    _, short = _logged((0, 0), (0, 2), obstacle, DETOUR_TURN_RIGHT_DURATION=1.0, DETOUR_TURN_LEFT_DURATION=1.0)
-    _, long = _logged((0, 0), (0, 2), obstacle, DETOUR_TURN_RIGHT_DURATION=1.8, DETOUR_TURN_LEFT_DURATION=1.8)
-    assert short.rotations()[0][1] == pytest.approx(long.rotations()[0][1], abs=0.15)
+    _, short = _logged((0, 0), (0, 2), obstacle, DETOUR_APPROACH_DURATION=0.3)
+    _, long = _logged((0, 0), (0, 2), obstacle, DETOUR_APPROACH_DURATION=1.5)
+    assert short.durations(APPROACHING)[0] == pytest.approx(long.durations(APPROACHING)[0], abs=0.15)
 
 
-@pytest.mark.parametrize("kwargs,key", [
-    ({"left": True}, "DETOUR_TURN_LEFT_DURATION"),
-    ({"left": False}, "DETOUR_TURN_RIGHT_DURATION"),
-    ({"left": False, "half_turn": True}, "DETOUR_TURN_180_DURATION"),
-])
-def test_chaque_rotation_a_sa_duree_reglable(kwargs: Any, key: str) -> None:
-    tuning.update({key: 0.7})
-
-    def seconds(after_detour: bool) -> float:
-        control = Control(World((0, 0), Direction.SOUTH))  # type: ignore[arg-type]
-        t = 0.0
-        while not control.turn(t, start_time=0.0, after_detour=after_detour, **kwargs):
-            t += 0.01
-        return t
-
-    normal = utils.TURN_180_DURATION if kwargs.get("half_turn") else utils.TURN_90_DURATION
-    assert seconds(True) - seconds(False) == pytest.approx(0.7 - normal, abs=0.03)
+def test_rotations_apres_le_retour_gardent_les_durees_normales() -> None:
+    _, normal = _logged((0, 0), (0, 2), (0, 1.5), TURN_90_DURATION=1.0)
+    _, other = _logged((0, 0), (0, 2), (0, 1.5), TURN_90_DURATION=1.3)
+    first, second = normal.durations(RobotState.TURNING_MINUS_90)[0], other.durations(RobotState.TURNING_MINUS_90)[0]
+    assert second - first == pytest.approx(0.3, abs=0.15)
 
 
 # Scénarios complets
