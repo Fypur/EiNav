@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -9,11 +9,18 @@ from vision import utils
 
 
 class LineDetection(NamedTuple):
-    cx: Optional[int]  # abscisse du centre de la ligne (None si pas de ligne)
+    cx: Optional[int]  # abscisse du centre de la ligne dans l'image (None si pas de ligne)
     is_intersection: bool
-    roi_w: int
+    image_w: int  # largeur de l'image, le suivi de ligne vise son milieu
     roi_top: int  # ordonnée du haut de la zone d'intérêt dans l'image
     mask: np.ndarray  # image binaire de la zone d'intérêt
+    roi_left: int = 0  # abscisse du bord gauche de la zone d'intérêt dans l'image
+
+
+def _roi_span(size: int, start_ratio: float, end_ratio: float) -> Tuple[int, int]:
+    """Bornes en pixels de la zone sur un axe. Garde une taille min même si les réglages se croisent."""
+    start = int(size * start_ratio)
+    return start, max(int(size * end_ratio), start + utils.ROI_MIN_PIXELS)
 
 
 def _widest_run(mask: np.ndarray) -> int:
@@ -31,9 +38,10 @@ class ImageProcessor:
         """Traite l'image BGR et renvoie la détection."""
         h, w = image_bgr.shape[:2]
 
-        # Zone d'intérêt : le bas de l'image
-        roi_top = int(h * utils.ROI_TOP_RATIO)
-        roi = image_bgr[roi_top:h, 0:w]
+        # Zone d'intérêt : le rectangle réglable depuis l'interface
+        roi_top, roi_bottom = _roi_span(h, utils.ROI_TOP_RATIO, utils.ROI_BOTTOM_RATIO)
+        roi_left, roi_right = _roi_span(w, utils.ROI_LEFT_RATIO, utils.ROI_RIGHT_RATIO)
+        roi = image_bgr[roi_top:roi_bottom, roi_left:roi_right]
         roi_h, roi_w = roi.shape[:2]
 
         # Etape 1 : flou
@@ -65,22 +73,24 @@ class ImageProcessor:
                 # Une ligne en biais qui passe par un coin touche aussi le haut, le bas et un côté,
                 # donc on vérifie en plus la large bande horizontale du croisement
                 if touches_top and touches_bottom and (touches_left or touches_right):
-                    is_intersection = _widest_run(morphed) >= utils.INTERSECTION_MIN_WIDTH_RATIO * roi_w
+                    # Par rapport à l'image et pas à la zone : dans une zone étroite, une simple ligne serait assez large
+                    is_intersection = _widest_run(morphed) >= utils.INTERSECTION_MIN_WIDTH_RATIO * w
 
                 M = cv2.moments(max_contour)
                 if M['m00'] > 0:
-                    cx = int(M['m10'] / M['m00'])
+                    cx = int(M['m10'] / M['m00']) + roi_left
 
-        return LineDetection(cx, bool(is_intersection), roi_w, roi_top, morphed)
+        return LineDetection(cx, bool(is_intersection), w, roi_top, morphed, roi_left)
 
     def annotate(self, image_bgr: np.ndarray, detection: LineDetection) -> np.ndarray:
         """Image pour l'interface, avec la zone d'intérêt, la ligne et son centre."""
         annotated = image_bgr.copy()
-        h, w = annotated.shape[:2]
-        roi = annotated[detection.roi_top:h, 0:w]
+        roi_h, roi_w = detection.mask.shape[:2]
+        bottom, right = detection.roi_top + roi_h, detection.roi_left + roi_w
+        roi = annotated[detection.roi_top:bottom, detection.roi_left:right]
         roi[detection.mask > 0] = utils.LINE_COLOR
-        cv2.rectangle(annotated, (0, detection.roi_top), (w - 1, h - 1),
+        cv2.rectangle(annotated, (detection.roi_left, detection.roi_top), (right - 1, bottom - 1),
                       utils.INTERSECTION_COLOR if detection.is_intersection else utils.ROI_COLOR, 1)
         if detection.cx is not None:
-            cv2.line(annotated, (detection.cx, detection.roi_top), (detection.cx, h - 1), utils.TARGET_COLOR, 1)
+            cv2.line(annotated, (detection.cx, detection.roi_top), (detection.cx, bottom - 1), utils.TARGET_COLOR, 1)
         return annotated

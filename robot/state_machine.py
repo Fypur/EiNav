@@ -107,7 +107,7 @@ class LineLossWatch:
     def update(self, detection: LineDetection) -> None:
         """Retient le côté de la ligne si on la voit."""
         if detection.cx is not None:
-            half_width = detection.roi_w / 2
+            half_width = detection.image_w / 2
             if detection.cx != half_width:
                 self.last_turn_left = detection.cx < half_width
 
@@ -126,7 +126,7 @@ class LineLossWatch:
 def _steer(controller: Control, detection: LineDetection, now: float) -> None:
     """Suit la ligne si on la voit, sinon tout droit doucement."""
     if detection.cx is not None:
-        half_width = detection.roi_w / 2
+        half_width = detection.image_w / 2
         controller.aim(now, (detection.cx - half_width) / half_width)
     else:
         controller.forward(now)

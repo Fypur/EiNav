@@ -70,6 +70,15 @@ SETTINGS = (
     Setting("ROI_TOP_RATIO", vision_utils, "Vision", "Haut de la zone analysée",
             "Fraction de la hauteur de l'image où commence la zone analysée. "
             "Plus petit : le robot regarde plus loin.", 0.1, 0.9, 0.05),
+    Setting("ROI_BOTTOM_RATIO", vision_utils, "Vision", "Bas de la zone analysée",
+            "Fraction de la hauteur de l'image où finit la zone analysée. "
+            "Plus petit : ignore ce qui est juste devant le robot.", 0.2, 1.0, 0.05),
+    Setting("ROI_LEFT_RATIO", vision_utils, "Vision", "Gauche de la zone analysée",
+            "Fraction de la largeur de l'image où commence la zone analysée. Le robot vise toujours "
+            "le milieu de l'image, pas celui de la zone.", 0.0, 0.9, 0.05),
+    Setting("ROI_RIGHT_RATIO", vision_utils, "Vision", "Droite de la zone analysée",
+            "Fraction de la largeur de l'image où finit la zone analysée. Le robot vise toujours "
+            "le milieu de l'image, pas celui de la zone.", 0.1, 1.0, 0.05),
     Setting("MIN_LINE_AREA", vision_utils, "Vision", "Surface minimale de ligne",
             "En dessous de cette surface, une tache blanche est ignorée.", 0, 2000, 10, "px", integer=True),
     Setting("INTERSECTION_MIN_WIDTH_RATIO", vision_utils, "Vision", "Largeur d'un croisement",

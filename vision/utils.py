@@ -14,7 +14,12 @@ JPEG_QUALITY = 80
 BOUNDARY = b"frame"
 
 # Détection de la ligne
-ROI_TOP_RATIO = 0.6  # début de la zone d'intérêt, en fraction de la hauteur de l'image
+# Zone d'intérêt (le rectangle bleu), en fraction de la hauteur et de la largeur de l'image
+ROI_TOP_RATIO = 0.6
+ROI_BOTTOM_RATIO = 1.0
+ROI_LEFT_RATIO = 0.0
+ROI_RIGHT_RATIO = 1.0
+ROI_MIN_PIXELS = 10  # taille min de la zone, si les réglages se croisent (bas au-dessus du haut par exemple)
 BINARY_THRESHOLD = 140  # niveau de gris (0-255) à partir duquel un pixel fait partie de la ligne
 MIN_LINE_AREA = 50  # surface min (pixels) pour accepter une ligne
 # Largeur min de la bande blanche d'un croisement, en fraction de la largeur de l'image. Sur 227 images réelles,

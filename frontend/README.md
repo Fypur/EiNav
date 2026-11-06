@@ -52,7 +52,9 @@ Le point d'accès mobile doit permettre la communication locale entre les appare
 
 Les valeurs par défaut sont dans le fichier `utils.py` de chaque dossier (`robot/`, `vision/`, `planning/`, `connections/`).
 
-Les plus utiles se changent dans le panneau **Réglages** de la page : vitesses, kp, durée d'approche, virages, seuil de blanc. Un changement s'applique aussitôt, même en mission, et il est conservé dans `settings.json`, sur le Pi et hors de git.
+Les plus utiles se changent dans le panneau **Réglages** de la page : vitesses, kp, durée d'approche, virages, seuil de blanc, position des quatre côtés de la zone analysée (le rectangle bleu sur l'image).
+
+Si cette zone fait moins de 30 % de la largeur de l'image (`INTERSECTION_MIN_WIDTH_RATIO`), les croisements ne peuvent plus être détectés. Un changement s'applique aussitôt, même en mission, et il est conservé dans `settings.json`, sur le Pi et hors de git.
 
 Une valeur modifiée depuis l'interface prend le pas sur `utils.py`. Le bouton ↺ à côté d'un réglage le remet à la valeur de `utils.py`. Pour ajouter un réglage, compléter la liste `SETTINGS` de `robot/tuning.py`.
 
