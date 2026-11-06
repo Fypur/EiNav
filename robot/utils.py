@@ -28,6 +28,12 @@ OBSTACLE_RESUME_CM = 25  # une fois arrêté, on ne repart qu'au-dessus de cette
 OBSTACLE_FILTER_READINGS = 3  # nombre de mesures gardées, on prend la plus petite
 OBSTACLE_CONFIRM_SECONDS = 1.0  # bloqué depuis ce temps devant un obstacle, on enlève l'arête du graphe
 
+# Après un obstacle : retour au dernier noeud à vitesse réduite, puis rotations avec leurs propres durées
+DETOUR_SPEED = 0.2  # vitesse sur la ligne pendant le retour
+DETOUR_TURN_LEFT_DURATION = 1.5  # rotation à gauche à l'arrivée au noeud, en secondes
+DETOUR_TURN_RIGHT_DURATION = 1.5  # rotation à droite à l'arrivée au noeud
+DETOUR_TURN_180_DURATION = 3.0  # demi-tour à l'arrivée au noeud
+
 # En dessous de cet écart on considère que la consigne est atteinte
 # (une exponentielle ne l'atteint jamais vraiment)
 SPEED_EPSILON = 0.01

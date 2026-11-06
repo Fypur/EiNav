@@ -87,9 +87,17 @@ class Control:
         speed = utils.TURN_SPEED
         self._drive(now, 0.0, -speed if left else speed)
 
-    def turn(self, now: float, left: bool, start_time: float, half_turn: bool = False) -> bool:
-        """Rotation sur place de 90° ou 180°. Renvoie True une fois la rotation finie et le robot arrêté."""
-        duration = utils.TURN_180_DURATION if half_turn else utils.TURN_90_DURATION
+    def turn(self, now: float, left: bool, start_time: float, half_turn: bool = False,
+             after_detour: bool = False) -> bool:
+        """Rotation sur place de 90° ou 180°. Renvoie True une fois la rotation finie et le robot arrêté.
+
+        after_detour : on arrive d'un retour à vitesse réduite après un obstacle, les durées sont à part.
+        """
+        if after_detour:
+            duration = (utils.DETOUR_TURN_180_DURATION if half_turn
+                        else utils.DETOUR_TURN_LEFT_DURATION if left else utils.DETOUR_TURN_RIGHT_DURATION)
+        else:
+            duration = utils.TURN_180_DURATION if half_turn else utils.TURN_90_DURATION
         turning = now - start_time < duration
         speed = utils.TURN_SPEED if turning else 0.0
         self._drive(now, 0.0, -speed if left else speed)

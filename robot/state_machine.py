@@ -217,8 +217,8 @@ def run_state_machine(
 ) -> Mission:
     """Mission de livraison : aller à end_pos, faire un tour complet, puis revenir à start_pos.
 
-    Si un obstacle bloque la ligne, on enlève l'arête du graphe, on retourne au dernier noeud et
-    on repart par un autre chemin. S'il n'y a plus de chemin, la mission s'arrête.
+    Si un obstacle bloque la ligne, on enlève l'arête du graphe, on retourne au dernier noeud à
+    vitesse réduite et on repart par un autre chemin. S'il n'y a plus de chemin, la mission s'arrête.
 
     Renvoie la mission avec ses flags.
     """
@@ -251,6 +251,8 @@ def run_state_machine(
     # Empêche de détecter plusieurs fois la même intersection (dont celle de départ, si elle est visible)
     intersection_armed = False
     seeking_after_turn = False
+    slow_return = False  # retour au dernier noeud après un obstacle, à vitesse réduite
+    turn_after_detour = False  # la rotation en cours suit ce retour, elle a ses propres durées
 
     def publish(line_detected: bool = False, is_intersection: bool = False) -> None:
         if telemetry is not None:
@@ -267,7 +269,11 @@ def run_state_machine(
                 print("Arrêt demandé depuis l'interface.")
                 break
 
-            controller.set_speed_cap(obstacle.update(serial.get_distance_cm()))
+            speed_cap = obstacle.update(serial.get_distance_cm())
+            # Pas pendant l'approche : elle doit rester à FORWARD_SPEED pour s'arrêter au centre du croisement
+            if slow_return and robot_state in (RobotState.FOLLOWING, RobotState.SEARCHING_LINE):
+                speed_cap = min(speed_cap, utils.DETOUR_SPEED)
+            controller.set_speed_cap(speed_cap)
             current_time = connection.get_time()
             frame = connection.get_frame()
             if frame is None:  # pas d'image, on ne roule pas à l'aveugle
@@ -307,6 +313,7 @@ def run_state_machine(
                     robot_dir = robot_dir.opposite
                     mission.heading = robot_dir
                     robot_state = RobotState.TURNING_180
+                    slow_return, turn_after_detour = True, False  # ce demi-tour-là garde la durée normale
                     line_watch.last_turn_left = False
                     action_start_time = current_time
                     # La caméra voit le croisement à partir de la distance d'approche, pas plus près
@@ -380,6 +387,7 @@ def run_state_machine(
 
             elif robot_state == RobotState.STOP_ON_INTERSECTION:
                 if controller.stop(current_time):
+                    turn_after_detour, slow_return = slow_return, False
                     was_at_destination = mission.destination_reached
                     next_dir = mission.on_intersection()
                     controller.travel = 0.0
@@ -435,21 +443,21 @@ def run_state_machine(
                             seeking_after_turn = False
 
             elif robot_state == RobotState.TURNING_90:
-                if controller.turn(current_time, True, action_start_time):
+                if controller.turn(current_time, True, action_start_time, after_detour=turn_after_detour):
                     print("Rotation gauche terminée.")
                     robot_state = RobotState.FOLLOWING
                     line_watch.reset_timer()
                     seeking_after_turn = True
 
             elif robot_state == RobotState.TURNING_MINUS_90:
-                if controller.turn(current_time, False, action_start_time):
+                if controller.turn(current_time, False, action_start_time, after_detour=turn_after_detour):
                     print("Rotation droite terminée.")
                     robot_state = RobotState.FOLLOWING
                     line_watch.reset_timer()
                     seeking_after_turn = True
 
             elif robot_state == RobotState.TURNING_180:
-                if controller.turn(current_time, False, action_start_time, half_turn=True):
+                if controller.turn(current_time, False, action_start_time, half_turn=True, after_detour=turn_after_detour):
                     print("Demi-tour terminé.")
                     robot_state = RobotState.FOLLOWING
                     line_watch.reset_timer()
