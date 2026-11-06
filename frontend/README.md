@@ -37,7 +37,7 @@ Dans les deux modes, si le robot en suivi de ligne ne voit plus aucune ligne pen
 
 Dans les deux modes, le capteur ultrason freine le robot devant un obstacle : il ralentit à moins de 60 cm et s'arrête complètement à 20 cm, distances mesurées depuis le capteur (`OBSTACLE_*` dans `robot/utils.py`). Il repart seul quand l'obstacle s'éloigne au-delà de 25 cm. Si le capteur ne donne aucune mesure, le robot l'ignore et poursuit sa mission **sans détecter les obstacles** ; l'interface affiche alors « Ultrason sans mesure : ignoré ». Le programme `arduino/src` doit être téléversé sur la carte, car il contient la commande de lecture du capteur.
 
-En livraison, si le robot reste arrêté plus d'une seconde devant un obstacle (`OBSTACLE_CONFIRM_SECONDS`), l'arête est retirée du graphe et barrée de rouge sur la grille. Le robot fait demi-tour, revient à son dernier nœud à vitesse réduite et repart par un nouveau chemin. Cette vitesse et la durée d'approche de ce nœud se règlent dans la section **Après un obstacle** du panneau **Réglages**. Sans chemin possible, il s'arrête et l'interface affiche « Arrêt : aucun chemin ». Les arêtes restent bloquées d'une mission à l'autre, jusqu'au bouton **Réinitialiser la carte**, disponible hors mission, ou au redémarrage du programme. Sur le parcours en 8, le robot attend simplement que la voie se libère.
+En livraison, si le robot reste arrêté plus d'une seconde devant un obstacle (`OBSTACLE_CONFIRM_SECONDS`), l'arête est retirée du graphe et barrée de rouge sur la grille. Le robot fait demi-tour, se recale sur la ligne avec la caméra, revient à son dernier nœud à vitesse réduite et repart par un nouveau chemin. S'il ne retrouve pas la ligne, il s'arrête et l'interface affiche « Arrêt : ligne perdue ». Cette vitesse, la durée d'approche de ce nœud et l'alignement se règlent dans la section **Après un obstacle** du panneau **Réglages**. Sans chemin possible, il s'arrête et l'interface affiche « Arrêt : aucun chemin ». Les arêtes restent bloquées d'une mission à l'autre, jusqu'au bouton **Réinitialiser la carte**, disponible hors mission, ou au redémarrage du programme. Sur le parcours en 8, le robot attend simplement que la voie se libère.
 
 Depuis un navigateur sur le même réseau :
 
@@ -48,13 +48,22 @@ Depuis un navigateur sur le même réseau :
 
 Le point d'accès mobile doit permettre la communication locale entre les appareils.
 
+## Détection des croisements
+
+Tout se passe dans la zone analysée (le rectangle bleu). Un croisement plus loin dans l'image ne compte pas encore : la durée d'approche part du moment où il entre dans cette zone.
+
+1. **Méthode forte :** la ligne touche le haut, le bas et un côté de la zone, avec une large bande blanche. Si elle répond oui, c'est un croisement. Avec **Exiger le haut de la zone** sur OFF, le bas et un côté suffisent : le robot détecte plus facilement, mais fait aussi plus de faux croisements.
+2. **Sinon, Hough :** on cherche sur le contour de la ligne une horizontale et une verticale en même temps. Une ligne droite en biais ou un virage large n'a qu'une seule direction à la fois, donc ça ne déclenche pas. **Méthode de Hough** sur OFF désactive cette étape.
+
+Si le robot voit des croisements qui n'existent pas, augmenter **Longueur min d'une horizontale** ou baisser **Inclinaison max d'une horizontale** dans le panneau **Réglages**.
+
 ## Réglages du robot
 
 Les valeurs par défaut sont dans le fichier `utils.py` de chaque dossier (`robot/`, `vision/`, `planning/`, `connections/`).
 
 Les plus utiles se changent dans le panneau **Réglages** de la page : vitesses, kp, durée d'approche, virages, seuil de blanc, position des quatre côtés de la zone analysée (le rectangle bleu sur l'image).
 
-Si cette zone fait moins de 30 % de la largeur de l'image (`INTERSECTION_MIN_WIDTH_RATIO`), les croisements ne peuvent plus être détectés. Un changement s'applique aussitôt, même en mission, et il est conservé dans `settings.json`, sur le Pi et hors de git.
+Si cette zone fait moins de 20 % de la largeur de l'image, les croisements ne peuvent plus être détectés. Un changement s'applique aussitôt, même en mission, et il est conservé dans `settings.json`, sur le Pi et hors de git.
 
 Une valeur modifiée depuis l'interface prend le pas sur `utils.py`. Le bouton ↺ à côté d'un réglage le remet à la valeur de `utils.py`. Pour ajouter un réglage, compléter la liste `SETTINGS` de `robot/tuning.py`.
 

@@ -178,6 +178,52 @@ def test_vision_supporte_les_bornes_de_zone(ratio: float) -> None:
     processor.annotate(_cross(), processor.process_frame(_cross()))
 
 
+# Interrupteurs ON/OFF
+
+@pytest.mark.parametrize("key", ["CROSSING_REQUIRE_TOP", "CROSSING_USE_HOUGH"])
+def test_interrupteur_on_off(key: str) -> None:
+    described = {s["key"]: s for s in tuning.describe()}[key]
+    assert described["boolean"] is True and described["default"] is True
+    tuning.update({key: False})
+    assert getattr(vision_utils, key) is False
+    tuning.update({key: True})
+    assert getattr(vision_utils, key) is True
+
+
+@pytest.mark.parametrize("value", [1, 0, "ON", None, 0.5])
+def test_interrupteur_refuse_autre_chose_qu_on_off(value: object) -> None:
+    with pytest.raises(ValueError):
+        tuning.update({"CROSSING_USE_HOUGH": value})
+    assert vision_utils.CROSSING_USE_HOUGH is True
+
+
+def test_un_reglage_numerique_refuse_toujours_on_off() -> None:
+    with pytest.raises(ValueError):
+        tuning.update({"KP": True})
+
+
+def test_reglages_numeriques_ne_sont_pas_des_interrupteurs() -> None:
+    assert {s["key"] for s in tuning.describe() if s["boolean"]} == {"CROSSING_REQUIRE_TOP", "CROSSING_USE_HOUGH"}
+
+
+def test_interrupteur_conserve_au_redemarrage() -> None:
+    tuning.update({"CROSSING_USE_HOUGH": False})
+    assert json.loads(tuning.SETTINGS_FILE.read_text(encoding="utf-8"))["CROSSING_USE_HOUGH"] is False
+    vision_utils.CROSSING_USE_HOUGH = True  # comme au démarrage du programme
+    tuning.load()
+    assert vision_utils.CROSSING_USE_HOUGH is False
+    tuning.reset(["CROSSING_USE_HOUGH"])
+    assert vision_utils.CROSSING_USE_HOUGH is True
+    assert "CROSSING_USE_HOUGH" not in json.loads(tuning.SETTINGS_FILE.read_text(encoding="utf-8"))
+
+
+def test_interrupteur_invalide_dans_le_fichier_ignore(capsys: pytest.CaptureFixture) -> None:
+    tuning.SETTINGS_FILE.write_text(json.dumps({"CROSSING_USE_HOUGH": "non"}), encoding="utf-8")
+    tuning.load()
+    assert vision_utils.CROSSING_USE_HOUGH is True
+    assert "ON ou OFF attendu" in capsys.readouterr().out
+
+
 # Conservation
 
 def test_conserve_au_redemarrage_et_seulement_les_differences() -> None:

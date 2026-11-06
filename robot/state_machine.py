@@ -13,7 +13,7 @@ from robot.control import Control
 from robot.obstacle import ObstacleGuard, ObstacleState
 from robot.states import Mode, RobotState
 from robot.telemetry import FigureEightRequest, Order, TelemetryServer, make_status
-from vision.image_processor import ImageProcessor, LineDetection
+from vision.image_processor import ImageProcessor, LineDetection, far_line_center
 
 
 def get_turn_state(current_dir: Direction, next_dir: Direction) -> RobotState:
@@ -130,6 +130,30 @@ def _steer(controller: Control, detection: LineDetection, now: float) -> None:
         controller.aim(now, (detection.cx - half_width) / half_width)
     else:
         controller.forward(now)
+
+
+def _align_on_line(controller: Control, detection: LineDetection, now: float, elapsed: float) -> Optional[bool]:
+    """Pivote jusqu'à avoir la ligne au milieu de l'image, à la fin du demi-tour devant un obstacle.
+
+    La durée du demi-tour n'est jamais parfaite, et sans ça le robot repart de travers.
+    Renvoie True une fois aligné et arrêté, False si c'est en cours, None si la ligne reste introuvable.
+    """
+    # Temps pour tourner de ALIGN_SEARCH_DEGREES : d'abord vers la droite (sens du demi-tour), puis vers la gauche
+    search = (utils.ALIGN_SEARCH_DEGREES / 180 * utils.TURN_180_DURATION * utils.TURN_SPEED / utils.ALIGN_SPEED)
+    if detection.cx is None:
+        if elapsed > 3 * search:
+            return None
+        controller.spin(now, elapsed > search, utils.ALIGN_SPEED)
+        return False
+
+    # Pas le barycentre de toute la tache : près d'un croisement, les branches le décalent
+    line_x = far_line_center(detection)
+    half_width = detection.image_w / 2
+    error = ((detection.cx if line_x is None else line_x) - half_width) / half_width
+    if abs(error) <= utils.ALIGN_TOLERANCE or elapsed > 3 * search:
+        return controller.stop(now)
+    controller.spin(now, error < 0, utils.ALIGN_SPEED)
+    return False
 
 
 def run_figure_eight(
@@ -462,6 +486,22 @@ def run_state_machine(
             elif robot_state == RobotState.TURNING_180:
                 if controller.turn(current_time, False, action_start_time, half_turn=True):
                     print("Demi-tour terminé.")
+                    if slow_return:  # devant un obstacle : on se recale sur la ligne avant de repartir
+                        robot_state = RobotState.ALIGNING_LINE
+                        action_start_time = current_time
+                    else:
+                        robot_state = RobotState.FOLLOWING
+                        line_watch.reset_timer()
+                        seeking_after_turn = True
+
+            elif robot_state == RobotState.ALIGNING_LINE:
+                aligned = _align_on_line(controller, detection, current_time, current_time - action_start_time)
+                if aligned is None:
+                    print("Ligne introuvable après le demi-tour : arrêt du robot.")
+                    mission.line_lost = True
+                    break
+                if aligned:
+                    print("Aligné sur la ligne.")
                     robot_state = RobotState.FOLLOWING
                     line_watch.reset_timer()
                     seeking_after_turn = True

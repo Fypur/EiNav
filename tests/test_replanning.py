@@ -211,7 +211,8 @@ class Watch(Recorder):
         """État juste après le demi-tour de retour au noeud."""
         states = [s.state for s in self.statuses if s.blocked_edges]
         assert states[0] == RobotState.TURNING_180.name
-        return next(state for state in states if state != RobotState.TURNING_180.name)
+        return next(state for state in states
+                    if state not in (RobotState.TURNING_180.name, RobotState.ALIGNING_LINE.name))
 
 
 def _watched(world: World, node: Tuple[int, int]) -> Tuple[Mission, Watch, Grid]:
@@ -388,6 +389,106 @@ def test_rotations_apres_le_retour_gardent_les_durees_normales() -> None:
     _, other = _logged((0, 0), (0, 2), (0, 1.5), TURN_90_DURATION=1.3)
     first, second = normal.durations(RobotState.TURNING_MINUS_90)[0], other.durations(RobotState.TURNING_MINUS_90)[0]
     assert second - first == pytest.approx(0.3, abs=0.15)
+
+
+# Alignement sur la ligne à la fin du demi-tour
+
+class Scripted(World):
+    """Le centre de la ligne vu par la caméra est donné par le test, le temps de l'alignement."""
+
+    def __init__(self, script: Any, **kwargs: Any) -> None:
+        super().__init__((0, 0), Direction.SOUTH, obstacles=[(0, 1.5)], **kwargs)
+        self.script = script
+        self.aligning = False
+        self.spins: List[float] = []
+
+    def process_frame(self, image_bgr: np.ndarray) -> LineDetection:
+        detection = super().process_frame(image_bgr)
+        return detection._replace(cx=self.script(self)) if self.aligning else detection
+
+    def send_wheel_speeds(self, fl: float, fr: float, rr: float, rl: float) -> None:
+        super().send_wheel_speeds(fl, fr, rr, rl)
+        if self.aligning:
+            self.spins.append((fl - fr) / 2)
+
+
+class AlignWatch(Recorder):
+    def __init__(self, world: Scripted) -> None:
+        super().__init__()
+        self.world = world
+
+    def publish(self, status: Any) -> None:
+        super().publish(status)
+        self.world.aligning = status.state == RobotState.ALIGNING_LINE.name
+
+    def states(self) -> List[str]:
+        return [s.state for s in self.statuses]
+
+
+def _align(script: Any, max_steps: int = 6000) -> Tuple[Mission, AlignWatch, Scripted]:
+    world = Scripted(script, max_steps=max_steps)
+    watch = AlignWatch(world)
+    mission = run_state_machine(world, world, (0, 0), (0, 2), Direction.SOUTH, world, watch,  # type: ignore[arg-type]
+                                grid=Grid())
+    return mission, watch, world
+
+
+def test_demi_tour_devant_un_obstacle_passe_par_l_alignement() -> None:
+    mission, watch, _ = _align(lambda world: 80)
+    states = watch.states()
+    assert states[states.index(RobotState.TURNING_180.name) + 1:].index(RobotState.ALIGNING_LINE.name) >= 0
+    assert mission.destination_reached and mission.returned_home
+
+
+def test_demi_tour_a_destination_sans_alignement() -> None:
+    """Seul le demi-tour devant un obstacle est concerné, pas celui après la livraison."""
+    world = World((0, 0), Direction.SOUTH)
+    _, recorder, _ = _run(world, (0, 0), (0, 2), Direction.SOUTH)
+    assert RobotState.ALIGNING_LINE.name not in [s.state for s in recorder.statuses]
+
+
+@pytest.mark.parametrize("cx,sign", [(20, -1), (140, 1)])
+def test_pivote_du_cote_de_la_ligne(cx: int, sign: int) -> None:
+    """Ligne à gauche : rotation à gauche (< 0). Ligne à droite : rotation à droite (> 0)."""
+    calls = []
+
+    def script(world: World) -> int:
+        calls.append(1)
+        return 80 if len(calls) > 10 else cx
+
+    _, _, world = _align(script)
+    moving = [speed for speed in world.spins[:8] if abs(speed) > 0.01]
+    assert moving and all(speed * sign > 0 for speed in moving)
+    assert max(abs(speed) for speed in world.spins) <= utils.ALIGN_SPEED + 0.01
+
+
+def test_ligne_invisible_cherche_a_droite_puis_a_gauche() -> None:
+    calls = []
+
+    def script(world: World) -> Optional[int]:
+        calls.append(1)
+        return None if len(calls) < 70 else 80
+
+    mission, _, world = _align(script)
+    moving = [speed for speed in world.spins if abs(speed) > 0.05]
+    assert moving[0] > 0 and min(moving) < 0
+    assert not mission.line_lost
+
+
+def test_ligne_introuvable_arrete_le_robot() -> None:
+    mission, watch, world = _align(lambda world: None)
+    assert mission.line_lost
+    assert watch.states()[-1] == RobotState.ALIGNING_LINE.name
+    assert (world.left, world.right) == (0.0, 0.0), "moteurs coupés"
+
+
+def test_alignement_qui_n_y_arrive_pas_finit_par_repartir() -> None:
+    """Ligne visible mais jamais centrée : le suivi de ligne prend le relais au lieu de rester bloqué."""
+    mission, watch, _ = _align(lambda world: 150, max_steps=400)
+    states = watch.states()
+    assert not mission.line_lost
+    last_aligning = len(states) - 1 - states[::-1].index(RobotState.ALIGNING_LINE.name)
+    assert last_aligning < len(states) - 1, "il finit par sortir de l'alignement"
 
 
 # Scénarios complets

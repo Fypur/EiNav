@@ -71,6 +71,8 @@
   .setting-input input[type=range] { flex:1; min-width:0; min-height:32px; accent-color:var(--route); }
   .setting-input input[type=number] { width:76px; min-height:36px; font:inherit; border-radius:8px; padding:4px 6px;
                                       border:1px solid var(--line); background:var(--bg); color:var(--text); }
+  .toggle { display:inline-flex; flex-direction:row; align-items:center; gap:8px; min-height:36px; margin-right:auto; cursor:pointer; font-weight:600; }
+  .toggle input { width:20px; height:20px; margin:0; accent-color:var(--route); cursor:pointer; }
   .undo { min-height:36px; padding:0 9px; font-weight:400; }
   .undo[hidden] { display:none; }
   #tuning-footer { display:flex; flex-wrap:wrap; align-items:center; gap:8px 14px; margin-top:10px; }
@@ -149,7 +151,7 @@
   const STATE_LABEL = {
     FOLLOWING: "Suivi de ligne", SEARCHING_LINE: "Recherche de ligne", APPROACHING_INTERSECTION: "Approche d'intersection",
     STOP_ON_INTERSECTION: "Arrêt sur intersection", TURNING_90: "Rotation à gauche",
-    TURNING_MINUS_90: "Rotation à droite", TURNING_180: "Demi-tour", STOPPED: "Arrêté",
+    TURNING_MINUS_90: "Rotation à droite", TURNING_180: "Demi-tour", ALIGNING_LINE: "Alignement sur la ligne", STOPPED: "Arrêté",
     DELIVERING: "Livraison en cours",
     IDLE: "En attente de démarrage",
   };
@@ -416,6 +418,31 @@
 
       const line = row.appendChild(document.createElement("div"));
       line.className = "setting-input";
+      const addUndo = () => {
+        const undo = line.appendChild(document.createElement("button"));
+        undo.type = "button";
+        undo.className = "undo";
+        undo.textContent = "↺";
+        undo.setAttribute("aria-label", `Remettre ${s.label} à sa valeur par défaut`);
+        undo.addEventListener("click", () => sendSettings("settings/reset", { keys: [s.key] }));
+        return undo;
+      };
+
+      if (s.boolean) {
+        const toggle = line.appendChild(document.createElement("label"));
+        toggle.className = "toggle";
+        const box = toggle.appendChild(document.createElement("input"));
+        box.type = "checkbox";
+        box.id = `set-${s.key}`;
+        const state = toggle.appendChild(document.createElement("span"));
+        box.addEventListener("change", () => {
+          state.textContent = box.checked ? "ON" : "OFF";
+          queueSetting(s.key, box.checked);
+        });
+        inputs[s.key] = { row, box, state, undo: addUndo() };
+        continue;
+      }
+
       const slider = line.appendChild(document.createElement("input"));
       const number = line.appendChild(document.createElement("input"));
       slider.type = "range";
@@ -427,11 +454,7 @@
         input.max = s.max;
         input.step = s.step;
       }
-      const undo = line.appendChild(document.createElement("button"));
-      undo.type = "button";
-      undo.className = "undo";
-      undo.textContent = "↺";
-      undo.setAttribute("aria-label", `Remettre ${s.label} à sa valeur par défaut`);
+      const undo = addUndo();
 
       slider.addEventListener("input", () => {
         number.value = Number(slider.value).toFixed(decimals(s.step));
@@ -444,7 +467,6 @@
         number.value = clamped;   // avec Entrée le champ garde le focus, renderSettings ne le corrigerait pas
         queueSetting(s.key, clamped);
       });
-      undo.addEventListener("click", () => sendSettings("settings/reset", { keys: [s.key] }));
       inputs[s.key] = { row, slider, number, undo };
     }
   }
@@ -452,13 +474,18 @@
   function renderSettings() {
     let modified = 0;
     for (const s of settings) {
-      const { row, slider, number, undo } = inputs[s.key];
+      const { row, slider, number, box, state, undo } = inputs[s.key];
       const changed = s.value !== s.default;
       modified += changed ? 1 : 0;
       row.classList.toggle("changed", changed);
       undo.hidden = !changed;
-      undo.title = `Valeur par défaut : ${s.default}`;
+      undo.title = `Valeur par défaut : ${s.boolean ? (s.default ? "ON" : "OFF") : s.default}`;
       if (s.key in pending) continue;   // pour ne pas écraser ce que l'utilisateur est en train de taper
+      if (s.boolean) {
+        box.checked = s.value;
+        state.textContent = s.value ? "ON" : "OFF";
+        continue;
+      }
       slider.value = s.value;
       if (document.activeElement !== number) number.value = Number(s.value).toFixed(decimals(s.step));
     }

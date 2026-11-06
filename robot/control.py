@@ -82,9 +82,9 @@ class Control:
         """Suivi de ligne. error va de -1 (ligne à gauche) à 1 (ligne à droite)."""
         self._drive(now, utils.BASE_SPEED, 0.0, correction=error * utils.KP)
 
-    def spin(self, now: float, left: bool) -> None:
-        """Pivote sur place pour retrouver la ligne."""
-        speed = utils.TURN_SPEED
+    def spin(self, now: float, left: bool, speed: Optional[float] = None) -> None:
+        """Pivote sur place pour retrouver la ligne (à TURN_SPEED si on ne donne pas de vitesse)."""
+        speed = utils.TURN_SPEED if speed is None else speed
         self._drive(now, 0.0, -speed if left else speed)
 
     def turn(self, now: float, left: bool, start_time: float, half_turn: bool = False) -> bool:

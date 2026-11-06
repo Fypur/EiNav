@@ -26,6 +26,18 @@ MIN_LINE_AREA = 50  # surface min (pixels) pour accepter une ligne
 # une ligne en biais prise pour un croisement ne dépasse pas 0,22 et un croisement centré commence à 0,54.
 # Un T en bord de grille avec la ligne décalée descend vers 0,37, d'où un seuil assez bas.
 INTERSECTION_MIN_WIDTH_RATIO = 0.3
+CROSSING_REQUIRE_TOP = True  # méthode forte : la ligne doit aussi toucher le haut de la zone (False : version de Farès)
+CROSSING_USE_HOUGH = True  # deuxième méthode, si la méthode forte ne voit rien
+# Deuxième méthode (Hough) : croisement si on voit une horizontale et une verticale dans la zone d'intérêt.
+# Calé sur les 227 images réelles, aussi tournées jusqu'à 25°, décalées et plus ou moins lumineuses.
+HOUGH_HORIZONTAL_MAX_ANGLE = 20  # degrés, au-dessus ce n'est plus une ligne horizontale
+HOUGH_HORIZONTAL_MIN_WIDTH_RATIO = 0.2  # longueur min, en fraction de la largeur de l'image (les marches du masque font moins)
+HOUGH_VERTICAL_MIN_ANGLE = 65  # degrés, en dessous ce n'est plus une ligne verticale
+HOUGH_VERTICAL_MIN_HEIGHT_RATIO = 0.4  # longueur min, en fraction de la hauteur de la zone
+HOUGH_VOTES = 12  # nombre de pixels alignés pour que Hough garde un segment
+HOUGH_MAX_GAP = 3  # trou max (pixels) dans un segment
+ALIGN_ROWS = 5  # rangées lointaines utilisées pour se recaler sur la ligne après un demi-tour
+ALIGN_MAX_WIDTH_JUMP = 4  # pixels, au-delà d'une rangée à l'autre ce n'est plus la ligne mais une branche
 BLUR_KERNEL = (9, 9)  # dimensions impaires
 MORPH_KERNEL = (9, 9)
 

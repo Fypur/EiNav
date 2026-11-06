@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import NamedTuple, Optional, Tuple
 
 import cv2
@@ -31,6 +32,56 @@ def _widest_run(mask: np.ndarray) -> int:
         if edges.size:
             widest = max(widest, int((edges[1::2] - edges[::2]).max()))
     return widest
+
+
+def _sees_horizontal_and_vertical(contour: np.ndarray, shape: Tuple[int, int], image_w: int) -> bool:
+    """Cherche avec Hough une ligne horizontale et une ligne verticale sur le contour de la ligne.
+
+    On travaille sur les bords et pas sur le masque plein, sinon Hough trouve des segments
+    horizontaux à l'intérieur d'une ligne verticale un peu large.
+    """
+    only_contour = np.zeros(shape, np.uint8)
+    cv2.drawContours(only_contour, [contour], -1, 255, cv2.FILLED)  # enlève les reflets séparés de la ligne
+
+    min_horizontal = utils.HOUGH_HORIZONTAL_MIN_WIDTH_RATIO * image_w
+    min_vertical = utils.HOUGH_VERTICAL_MIN_HEIGHT_RATIO * shape[0]
+    lines = cv2.HoughLinesP(cv2.Canny(only_contour, 50, 150), 1, np.pi / 180, utils.HOUGH_VOTES,
+                            minLineLength=int(min(min_horizontal, min_vertical)), maxLineGap=utils.HOUGH_MAX_GAP)
+    if lines is None:
+        return False
+
+    horizontal = vertical = False
+    for x1, y1, x2, y2 in lines.reshape(-1, 4).tolist():  # la forme du tableau dépend de la version d'OpenCV
+        length = math.hypot(x2 - x1, y2 - y1)
+        angle = abs(math.degrees(math.atan2(y2 - y1, x2 - x1)))
+        angle = min(angle, 180 - angle)  # 0 : horizontal, 90 : vertical
+        horizontal = horizontal or (angle <= utils.HOUGH_HORIZONTAL_MAX_ANGLE and length >= min_horizontal)
+        vertical = vertical or (angle >= utils.HOUGH_VERTICAL_MIN_ANGLE and length >= min_vertical)
+    return horizontal and vertical
+
+
+def far_line_center(detection: LineDetection) -> Optional[float]:
+    """Abscisse de la ligne dans l'image, mesurée le plus loin possible devant le robot.
+
+    C'est loin qu'une erreur d'angle se voit le mieux. On remonte la ligne depuis le bas de l'image et on
+    s'arrête dès que sa largeur saute : c'est une branche de croisement, qui décalerait le centre.
+    None si on ne voit pas la ligne.
+    """
+    limit = utils.INTERSECTION_MIN_WIDTH_RATIO * detection.image_w
+    centers = []
+    previous_width = None
+    for row in (detection.mask > 0)[::-1]:
+        columns = np.flatnonzero(row)
+        width = columns[-1] - columns[0] + 1 if columns.size else 0
+        usable = 0 < width < limit and (previous_width is None or abs(width - previous_width) <= utils.ALIGN_MAX_WIDTH_JUMP)
+        if usable:
+            centers.append((columns[0] + columns[-1]) / 2)
+            previous_width = width
+        elif centers:
+            break
+    if not centers:
+        return None
+    return float(np.median(centers[-utils.ALIGN_ROWS:])) + detection.roi_left
 
 
 class ImageProcessor:
@@ -70,12 +121,15 @@ class ImageProcessor:
                 touches_left = np.any(morphed[:, 0] > 0)
                 touches_right = np.any(morphed[:, roi_w - 1] > 0)
 
-                # Une ligne en biais qui passe par un coin touche aussi le bas et un côté,
-                # donc on vérifie en plus la large bande horizontale du croisement
-                if touches_bottom and (touches_left or touches_right):
+                # Méthode forte : la ligne touche les bords de la zone. Une ligne en biais qui passe par
+                # un coin touche aussi le haut, le bas et un côté, donc on vérifie en plus la large bande du croisement
+                if (touches_top or not utils.CROSSING_REQUIRE_TOP) and touches_bottom and (touches_left or touches_right):
                     # Par rapport à l'image et pas à la zone : dans une zone étroite, une simple ligne serait assez large
                     is_intersection = _widest_run(morphed) >= utils.INTERSECTION_MIN_WIDTH_RATIO * w
 
+                # Sinon deuxième méthode : une ligne horizontale et une ligne verticale en même temps
+                if utils.CROSSING_USE_HOUGH and not is_intersection:
+                    is_intersection = _sees_horizontal_and_vertical(max_contour, morphed.shape, w)
                 M = cv2.moments(max_contour)
                 if M['m00'] > 0:
                     cx = int(M['m10'] / M['m00']) + roi_left

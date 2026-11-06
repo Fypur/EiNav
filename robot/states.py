@@ -16,5 +16,6 @@ class RobotState(Enum):
     TURNING_90 = auto()
     TURNING_MINUS_90 = auto()
     TURNING_180 = auto()
+    ALIGNING_LINE = auto()  # fin du demi-tour devant un obstacle : on se recale sur la ligne avec la caméra
     DELIVERING = auto()  # tour complet au point de livraison avant de repartir
     STOPPED = auto()

@@ -35,6 +35,7 @@ class Setting:
     step: float
     unit: str = ""
     integer: bool = False
+    boolean: bool = False  # interrupteur ON/OFF dans l'interface
 
 
 SETTINGS = (
@@ -69,6 +70,12 @@ SETTINGS = (
     Setting("DETOUR_APPROACH_DURATION", robot_utils, "Après un obstacle", "Durée d'approche après obstacle",
             "Temps pour atteindre le centre du croisement quand le robot y revient à vitesse réduite, "
             "après l'avoir détecté. Le robot s'arrête trop tôt : augmenter.", 0.0, 3.0, 0.05, "s"),
+    Setting("ALIGN_SPEED", robot_utils, "Après un obstacle", "Vitesse d'alignement",
+            "Vitesse des roues quand le robot se recale sur la ligne à la fin du demi-tour devant un obstacle. "
+            "Le robot ne bouge pas : augmenter. Il oscille autour de la ligne : baisser.", 0.05, 1.0, 0.01),
+    Setting("ALIGN_TOLERANCE", robot_utils, "Après un obstacle", "Tolérance d'alignement",
+            "Écart accepté entre la ligne et le milieu de l'image, en fraction de la demi-largeur. "
+            "Il oscille sans s'arrêter : augmenter.", 0.02, 0.5, 0.01),
     Setting("BINARY_THRESHOLD", vision_utils, "Vision", "Seuil de blanc",
             "Niveau de gris à partir duquel un pixel fait partie de la ligne. "
             "Baisser si la ligne n'est pas vue, monter si le sol passe en vert.",
@@ -90,6 +97,25 @@ SETTINGS = (
     Setting("INTERSECTION_MIN_WIDTH_RATIO", vision_utils, "Vision", "Largeur d'un croisement",
             "Largeur minimale de la bande blanche d'un croisement, en fraction de l'image. Tourne au milieu "
             "d'une ligne : augmenter. Passe des croisements sans les voir : baisser.", 0.1, 1.0, 0.05),
+    Setting("CROSSING_REQUIRE_TOP", vision_utils, "Vision", "Exiger le haut de la zone",
+            "Méthode forte : ON, la ligne doit toucher le haut, le bas et un côté de la zone (moins de faux "
+            "croisements). OFF, le bas et un côté suffisent (version de Farès, détecte plus facilement).",
+            0, 1, 1, boolean=True),
+    Setting("CROSSING_USE_HOUGH", vision_utils, "Vision", "Méthode de Hough",
+            "ON : si la méthode forte ne voit rien, un croisement est compté quand on voit une ligne horizontale "
+            "et une verticale. OFF : méthode forte seule, et les quatre réglages suivants ne servent plus.",
+            0, 1, 1, boolean=True),
+    Setting("HOUGH_HORIZONTAL_MAX_ANGLE", vision_utils, "Vision", "Inclinaison max d'une horizontale",
+            "Au-delà, un segment ne compte plus comme ligne horizontale. Voit des croisements qui n'existent "
+            "pas : baisser. Rate les croisements quand le robot est de travers : augmenter.", 5, 45, 1, "°", integer=True),
+    Setting("HOUGH_HORIZONTAL_MIN_WIDTH_RATIO", vision_utils, "Vision", "Longueur min d'une horizontale",
+            "En fraction de la largeur de l'image. Voit des croisements qui n'existent pas : augmenter.",
+            0.05, 1.0, 0.05),
+    Setting("HOUGH_VERTICAL_MIN_ANGLE", vision_utils, "Vision", "Inclinaison min d'une verticale",
+            "En dessous, un segment ne compte plus comme ligne verticale. Voit des croisements sur les lignes "
+            "en biais : augmenter.", 45, 90, 1, "°", integer=True),
+    Setting("HOUGH_VERTICAL_MIN_HEIGHT_RATIO", vision_utils, "Vision", "Longueur min d'une verticale",
+            "En fraction de la hauteur de la zone analysée.", 0.05, 1.0, 0.05),
 )
 
 _BY_KEY: Dict[str, Setting] = {setting.key: setting for setting in SETTINGS}
@@ -98,6 +124,10 @@ _lock = threading.Lock()
 
 
 def _validated(setting: Setting, value: object) -> float:
+    if setting.boolean:
+        if not isinstance(value, bool):
+            raise ValueError(f"{setting.label} : ON ou OFF attendu.")
+        return value
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{setting.label} : valeur numérique attendue.")
     # Écrit comme ça, le test rejette aussi NaN, l'infini et les entiers énormes que json.loads accepte
@@ -114,7 +144,7 @@ def describe() -> List[Dict[str, Any]]:
     """Liste des réglages avec leurs valeurs, pour l'interface."""
     return [
         {"key": s.key, "group": s.group, "label": s.label, "help": s.help, "unit": s.unit,
-         "min": s.minimum, "max": s.maximum, "step": s.step,
+         "min": s.minimum, "max": s.maximum, "step": s.step, "boolean": s.boolean,
          "value": getattr(s.module, s.key), "default": _DEFAULTS[s.key]}
         for s in SETTINGS
     ]
