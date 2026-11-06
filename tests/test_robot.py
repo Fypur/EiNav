@@ -17,7 +17,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-sys.modules.setdefault("serial", mock.MagicMock())  # pyserial absent hors du robot
+sys.modules.setdefault("serial", mock.MagicMock())  # pyserial n'est installé que sur le robot
 
 import EiNav  # noqa: E402
 from connections.base import RobotConnection  # noqa: E402
@@ -32,6 +32,7 @@ from robot.telemetry import (  # noqa: E402
     MissionRequest,
     TelemetryServer,
     make_status,
+    open_interface,
     parse_mission,
 )
 from vision.image_processor import ImageProcessor, LineDetection  # noqa: E402
@@ -51,7 +52,7 @@ class FakeSerial:
         pass
 
 
-# --- Mission ---------------------------------------------------------------------------------
+# Mission
 
 def test_mission_leve_le_flag_puis_fait_demi_tour_et_revient() -> None:
     mission = Mission([(0, 0), (1, 0), (1, 1)])
@@ -60,7 +61,7 @@ def test_mission_leve_le_flag_puis_fait_demi_tour_et_revient() -> None:
     assert mission.on_intersection() == Direction.SOUTH
     assert not mission.destination_reached
 
-    # Arrivée : flag levé, puis direction opposée à celle d'arrivée.
+    # À l'arrivée le flag passe à True et on repart dans l'autre sens
     assert mission.on_intersection() == Direction.NORTH
     assert mission.destination_reached
     assert not mission.returned_home
@@ -81,7 +82,7 @@ def test_retour_commence_par_un_demi_tour() -> None:
     assert get_turn_state(Direction.SOUTH, Direction.NORTH) == RobotState.TURNING_180
 
 
-# --- Rampes exponentielles -------------------------------------------------------------------
+# Rampes exponentielles
 
 def _make_control() -> Tuple[Control, FakeSerial]:
     serial = FakeSerial()
@@ -96,7 +97,7 @@ def test_acceleration_et_deceleration_exponentielles() -> None:
     speeds = [c[0] for c in serial.commands]
     assert speeds[1] < speeds[2] < robot_utils.BASE_SPEED
     assert speeds[-1] == robot_utils.BASE_SPEED
-    # Écart à la consigne divisé par un facteur constant : c'est une exponentielle.
+    # L'écart est divisé par un facteur constant, donc c'est bien une exponentielle
     ratios = [(robot_utils.BASE_SPEED - speeds[i + 1]) / (robot_utils.BASE_SPEED - speeds[i]) for i in range(1, 6)]
     assert ratios == pytest.approx([np.exp(-dt / robot_utils.RAMP_TIME_CONSTANT)] * 5)
 
@@ -158,10 +159,10 @@ def test_correction_de_direction_non_filtree() -> None:
     assert fl - fr == pytest.approx(2 * robot_utils.KP)
 
 
-# --- Machine à états -------------------------------------------------------------------------
+# Machine à états
 
 class FakeConnection(RobotConnection):
-    """Horloge simulée. Rend une image par pas ; `max_steps` borne les tests."""
+    """Horloge simulée, une image par pas. max_steps évite qu'un test tourne à l'infini."""
 
     def __init__(self, dt: float = 0.05, max_steps: int = 20000, drop_first: int = 0) -> None:
         self.t = 0.0
@@ -227,7 +228,7 @@ def test_aller_retour_complet() -> None:
     states = [s.state for s in recorder.statuses]
     assert RobotState.TURNING_180.name in states
 
-    # La livraison a lieu sur la destination, juste après la levée du flag, puis le demi-tour.
+    # La livraison se fait à destination juste après le flag, puis le demi-tour
     delivery = states.index(RobotState.DELIVERING.name)
     assert recorder.statuses[delivery].position == (2, 2)
     assert recorder.statuses[delivery].destination_reached
@@ -258,7 +259,7 @@ def _run_without_seeing_intersection(start: tuple, end: tuple, heading: Directio
 
 
 def test_depart_sans_voir_le_premier_croisement() -> None:
-    """Posé sur le croisement, le robot ne peut pas le voir : il part sans l'attendre."""
+    """Le robot est sur le croisement et ne peut pas le voir, il doit partir sans l'attendre."""
     recorder, serial = _run_without_seeing_intersection((0, 0), (0, 2), Direction.SOUTH)
     assert recorder.statuses[0].position == (0, 0), "sur le point de départ dès le lancement"
     states = [s.state for s in recorder.statuses]
@@ -277,7 +278,7 @@ def test_virage_sur_place_au_depart_si_mal_oriente() -> None:
 
 
 def test_chaque_croisement_compte_une_seule_fois() -> None:
-    """(0, 0) -> (0, 2) et retour : 4 croisements à voir, le départ n'étant vu qu'au retour."""
+    """(0, 0) -> (0, 2) et retour : 4 croisements à voir, le départ n'est vu qu'au retour."""
     recorder = Recorder()
     connection = FakeConnection()
     mission = run_state_machine(connection, FakeSerial(), (0, 0), (0, 2), Direction.SOUTH,  # type: ignore[arg-type]
@@ -289,8 +290,17 @@ def test_chaque_croisement_compte_une_seule_fois() -> None:
     assert approaches == 4
 
 
+def test_orientation_finale_publiee_pour_l_interface() -> None:
+    """Parti vers le sud, le robot revient en roulant vers le nord : c'est ce que lit l'interface."""
+    recorder = Recorder()
+    mission = run_state_machine(FakeConnection(), FakeSerial(), (0, 0), (0, 2), Direction.SOUTH,  # type: ignore[arg-type]
+                                processor=FakeProcessor(), telemetry=recorder)  # type: ignore[arg-type]
+    assert mission.returned_home and mission.heading == Direction.NORTH
+    assert make_status(Mode.GRID, RobotState.IDLE, 5, mission).heading == "NORTH"
+
+
 def test_croisement_vu_au_depart_ignore_jusqu_a_l_avoir_quitte() -> None:
-    """Si la caméra voit quand même le croisement de départ, il ne compte pas comme le suivant."""
+    """Si la caméra voit quand même le croisement de départ, il ne doit pas compter."""
     recorder = Recorder()
     run_state_machine(FakeConnection(max_steps=8), FakeSerial(), (0, 0), (0, 2), Direction.SOUTH,  # type: ignore[arg-type]
                       processor=ScriptedProcessor(seen_on=(1, 2, 3, 4)), telemetry=recorder)  # type: ignore[arg-type]
@@ -317,7 +327,7 @@ def test_chemin_impossible() -> None:
 ])
 def test_chaque_virage_utilise_sa_duree(heading: Direction, state: RobotState, used: str, other: str,
                                         monkeypatch: pytest.MonkeyPatch) -> None:
-    """Départ de (0, 0) vers le sud : l'orientation initiale impose le virage testé."""
+    """Départ de (0, 0) vers le sud, l'orientation de départ donne le virage à tester."""
     def steps_in_state() -> int:
         recorder, _ = _run_without_seeing_intersection((0, 0), (0, 2), heading)
         return sum(1 for s in recorder.statuses if s.state == state.name)
@@ -334,10 +344,10 @@ def test_chaque_virage_utilise_sa_duree(heading: Direction, state: RobotState, u
     assert steps_in_state() > reference, "cette durée allonge le virage"
 
 
-# --- Livraison : tour complet à destination ----------------------------------------------------
+# Livraison : tour complet à destination
 
 class SpinSerial(FakeSerial):
-    """Rotation envoyée aux roues (> 0 : à droite), rangée par état du robot."""
+    """Rotation envoyée aux roues (> 0 vers la droite), par état du robot."""
 
     def __init__(self, recorder: Recorder, dt: float) -> None:
         super().__init__()
@@ -365,7 +375,7 @@ def test_tour_complet_a_destination_avant_le_retour() -> None:
     mission, recorder, serial = _delivery()
     assert mission.returned_home and mission.position == (0, 0)
     half_turn = robot_utils.TURN_SPEED * robot_utils.TURN_180_DURATION
-    # La fin d'un demi-tour se rattache à l'état suivant : on vérifie le total, puis la répartition.
+    # La fin d'un demi-tour compte dans l'état suivant, donc on vérifie le total puis la répartition
     assert serial.rotation[RobotState.DELIVERING.name] == pytest.approx(2 * half_turn, rel=0.05)
     total = serial.rotation[RobotState.DELIVERING.name] + serial.rotation[RobotState.TURNING_180.name]
     assert total == pytest.approx(3 * half_turn, rel=0.02), "360° de livraison + demi-tour du retour"
@@ -412,7 +422,7 @@ def test_page_affiche_livraison_en_cours() -> None:
     assert "Livraison en cours" in (ROOT / "frontend" / "live.html").read_text(encoding="utf-8")
 
 
-# --- Parcours en 8 ---------------------------------------------------------------------------
+# Parcours en 8
 
 def _run_figure_eight(seen_on: Tuple[int, ...] = (), steps: int = 200) -> Tuple[Recorder, FakeSerial]:
     recorder, serial = Recorder(), FakeSerial()
@@ -452,10 +462,10 @@ def test_huit_ne_roule_pas_sans_image() -> None:
     assert all(c == (0.0, 0.0, 0.0, 0.0) for c in serial.commands)
 
 
-# --- Ligne perdue ----------------------------------------------------------------------------
+# Ligne perdue
 
 class LineScriptProcessor(FakeProcessor):
-    """Ligne vue seulement quand `visible(numéro d'image)` est vrai, à partir de l'image 1."""
+    """Ligne vue seulement si visible(numéro d'image) est vrai, à partir de l'image 1."""
 
     def __init__(self, visible: Any) -> None:
         super().__init__()
@@ -485,8 +495,8 @@ def test_ligne_perdue_plus_d_une_seconde_arrete_la_mission() -> None:
     mission, connection, serial = _grid_mission(lambda i: i <= last_seen)
     assert mission.line_lost and not mission.returned_home
     assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
-    # Première image sans ligne : 21. L'arrêt arrive à 1 s, à une image près (l'horloge simulée
-    # additionne des flottants : l'image de la 20e période peut déjà dépasser 1 s d'un arrondi).
+    # Première image sans ligne : la 21. Arrêt à 1 s à une image près (à cause des arrondis de
+    # l'horloge simulée, la 20e période peut déjà dépasser 1 s)
     lost_for = (connection.steps - (last_seen + 1)) * connection.dt
     assert robot_utils.LINE_LOST_TIMEOUT <= lost_for <= robot_utils.LINE_LOST_TIMEOUT + 2 * connection.dt
 
@@ -504,7 +514,7 @@ def test_pertes_breves_repetees_ne_s_additionnent_pas() -> None:
 
 
 def test_ligne_invisible_pendant_un_virage_n_arrete_pas() -> None:
-    """Demi-tour de 3 s au départ, sans voir la ligne : seul le suivi compte."""
+    """Demi-tour de 3 s au départ sans voir la ligne, seul le suivi doit compter."""
     mission, connection, _ = _grid_mission(lambda i: i > 70, heading=Direction.NORTH, steps=200)
     assert not mission.line_lost
     assert connection.steps == 200
@@ -624,7 +634,7 @@ def test_grille_apres_virage_memorise_sens_et_arrete_apres_timeout() -> None:
     assert any(cmd[0] < cmd[1] for cmd in serial.commands)
 
 
-# --- Vision ----------------------------------------------------------------------------------
+# Vision
 
 def _frame_with_cross() -> np.ndarray:
     frame = np.zeros((128, 160, 3), np.uint8)
@@ -647,7 +657,7 @@ def test_detection_et_annotation() -> None:
     assert not np.array_equal(annotated, frame)
 
 
-# --- Tableau de bord -------------------------------------------------------------------------
+# Tableau de bord
 
 def test_serveur_de_telemetrie() -> None:
     server = TelemetryServer(port=0)
@@ -675,7 +685,7 @@ def test_serveur_de_telemetrie() -> None:
         server.close()
 
 
-# --- Commande depuis l'interface -------------------------------------------------------------
+# Commande depuis l'interface
 
 def post(port: int, path: str, payload: object, content_type: str = "application/json") -> Tuple[int, dict]:
     request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", json.dumps(payload).encode(),
@@ -734,7 +744,7 @@ def test_parse_mission_refuse_les_ordres_invalides(body: bytes) -> None:
 
 
 class PacedConnection(FakeConnection):
-    """Horloge simulée rapide, arrêtée sur demande du test."""
+    """Horloge simulée rapide, que le test peut arrêter."""
 
     def __init__(self) -> None:
         super().__init__(max_steps=10 ** 9)
@@ -782,7 +792,7 @@ def test_demarrer_execute_l_aller_retour_puis_attend(robot: tuple) -> None:
     assert state["destination_reached"] and state["position"] == [0, 1]
     assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
 
-    # Le robot accepte une nouvelle livraison, et le résultat précédent ne reste pas affiché.
+    # Le robot accepte une nouvelle livraison et l'ancien résultat n'est plus affiché
     assert post(port, "/mission", {**MISSION, "destination": [0, 3]})[0] == 200
     wait_until(lambda: state_of(port)["destination"] == [0, 3])
     assert not state_of(port)["returned_home"]
@@ -802,7 +812,7 @@ def test_arreter_coupe_les_moteurs_immediatement(robot: tuple) -> None:
     assert len(serial.commands) == count, "plus aucune commande moteur après l'arrêt"
     assert not state_of(port)["returned_home"]
 
-    # L'arrêt ne doit pas empêcher la mission suivante.
+    # La mission suivante doit quand même pouvoir partir
     assert post(port, "/mission", MISSION)[0] == 200
     wait_until(lambda: state_of(port)["returned_home"] and state_of(port)["state"] == "IDLE")
 
@@ -824,7 +834,7 @@ def test_ordre_invalide_ne_lance_rien(robot: tuple) -> None:
 
 
 def test_autre_site_ne_peut_pas_demarrer_le_robot(robot: tuple) -> None:
-    """Un formulaire d'un autre site ne peut envoyer que du texte, sans passer de contrôle CORS."""
+    """Le formulaire d'un autre site peut seulement envoyer du texte sans contrôle CORS."""
     port, serial, connection, _ = robot
     assert post(port, "/mission", MISSION, content_type="text/plain")[0] == 415
     steps = connection.steps
@@ -845,7 +855,7 @@ def test_huit_tourne_jusqu_a_l_arret_puis_livraison_possible(robot: tuple) -> No
     wait_until(lambda: state_of(port)["mode"] == "HUIT")
     wait_until(lambda: any(c != (0.0, 0.0, 0.0, 0.0) for c in serial.commands))
 
-    # FakeProcessor voit un croisement toutes les 40 images : le robot doit en passer plusieurs.
+    # FakeProcessor voit un croisement toutes les 40 images, le robot doit en passer plusieurs
     steps = connection.steps
     wait_until(lambda: connection.steps > steps + 200)
     assert state_of(port)["mode"] == "HUIT" and state_of(port)["state"] != "IDLE"
@@ -892,7 +902,7 @@ def test_ligne_perdue_signalee_a_l_interface_puis_effacee(order: dict) -> None:
         assert state_of(port)["line_lost"] is True
         assert serial.commands[-1] == (0.0, 0.0, 0.0, 0.0)
 
-        # Le robot reste arrêté, même si la ligne revient, et une nouvelle mission efface l'alerte.
+        # Le robot reste arrêté même si la ligne revient, et une nouvelle mission enlève l'alerte
         count = len(serial.commands)
         visible["line"] = True
         steps = connection.steps
@@ -911,18 +921,41 @@ def test_ligne_perdue_signalee_a_l_interface_puis_effacee(order: dict) -> None:
     assert not thread.is_alive()
 
 
-# --- Point d'entrée --------------------------------------------------------------------------
+# Point d'entrée
 
-def _patch_main(monkeypatch: pytest.MonkeyPatch) -> Tuple[mock.MagicMock, mock.MagicMock, mock.MagicMock]:
-    telemetry, dashboard, opened = mock.MagicMock(), mock.MagicMock(), mock.MagicMock()
+def _patch_main(monkeypatch: pytest.MonkeyPatch) -> Tuple[mock.MagicMock, mock.MagicMock]:
+    # autospec : un appel qui ne respecte pas la signature de open_interface fait planter le test
+    telemetry, opened = mock.MagicMock(), mock.create_autospec(open_interface)
     monkeypatch.setattr(EiNav, "start_telemetry", lambda: telemetry)
-    monkeypatch.setattr(EiNav, "start_dashboard", lambda: dashboard)
     monkeypatch.setattr(EiNav, "open_interface", opened)
-    return telemetry, dashboard, opened
+    return telemetry, opened
+
+
+def test_open_interface_ouvre_la_page_du_robot() -> None:
+    opened = threading.Event()
+    urls: List[str] = []
+
+    def browser(url: str) -> None:
+        urls.append(url)
+        opened.set()
+
+    with mock.patch("robot.telemetry._has_display", return_value=True), \
+            mock.patch("robot.telemetry.webbrowser.open", browser):
+        open_interface()
+        assert opened.wait(5)
+    assert urls == [f"http://localhost:{robot_utils.TELEMETRY_PORT}/"]
+
+
+def test_open_interface_sans_ecran_n_ouvre_pas_de_navigateur() -> None:
+    browser = mock.MagicMock()
+    with mock.patch("robot.telemetry._has_display", return_value=False), \
+            mock.patch("robot.telemetry.webbrowser.open", browser):
+        open_interface()
+    browser.assert_not_called()
 
 
 def test_main_ferme_tout_si_le_materiel_est_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    telemetry, dashboard, opened = _patch_main(monkeypatch)
+    telemetry, opened = _patch_main(monkeypatch)
 
     def no_arduino(simulation: bool) -> None:
         raise OSError("/dev/ttyACM0 introuvable")
@@ -930,17 +963,16 @@ def test_main_ferme_tout_si_le_materiel_est_absent(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(EiNav, "create_environment", no_arduino)
     with pytest.raises(OSError):
         EiNav.main()
-    opened.assert_called_once_with(dashboard)
+    opened.assert_called_once_with()
     telemetry.close.assert_called_once()
-    dashboard.terminate.assert_called_once()
 
 
 def test_main_ouvre_l_interface_avant_le_robot_et_ferme_sur_ctrl_c(monkeypatch: pytest.MonkeyPatch) -> None:
-    telemetry, dashboard, opened = _patch_main(monkeypatch)
+    telemetry, opened = _patch_main(monkeypatch)
     connection, serial = mock.MagicMock(), mock.MagicMock()
 
     def environment(simulation: bool) -> Tuple[mock.MagicMock, mock.MagicMock]:
-        opened.assert_called_once_with(dashboard)
+        opened.assert_called_once_with()
         return connection, serial
 
     def ctrl_c(*args: object) -> None:
@@ -952,7 +984,6 @@ def test_main_ouvre_l_interface_avant_le_robot_et_ferme_sur_ctrl_c(monkeypatch: 
     serial.disconnect.assert_called_once()
     connection.close.assert_called_once()
     telemetry.close.assert_called_once()
-    dashboard.terminate.assert_called_once()
 
 
 def test_main_s_arrete_si_l_interface_est_indisponible(monkeypatch: pytest.MonkeyPatch) -> None:

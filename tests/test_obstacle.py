@@ -1,4 +1,4 @@
-"""Tests du freinage devant un obstacle détecté par le capteur ultrason."""
+"""Tests du freinage devant un obstacle (capteur ultrason)."""
 from __future__ import annotations
 
 import json
@@ -27,7 +27,7 @@ from robot.telemetry import TelemetryServer
 from vision.image_processor import ImageProcessor, LineDetection
 
 
-# --- Lecture du capteur ----------------------------------------------------------------------
+# Lecture du capteur
 
 class FakePort:
     def __init__(self, reply: bytes) -> None:
@@ -46,7 +46,7 @@ class FakePort:
 
 
 def test_lecture_de_la_reponse_binaire_de_l_arduino() -> None:
-    """Ret2li en mode binaire (commode == 2) : long millis, int distance, int nul, en petit-boutiste."""
+    """Ret2li en binaire (commode == 2) : long millis, int distance, int nul, en little endian."""
     arduino = Arduino.__new__(Arduino)
     arduino.serialport = FakePort(struct.pack("<lhh", 123456, 42, 0))  # type: ignore[assignment]
     assert arduino.GetDistance() == 42
@@ -65,7 +65,7 @@ def test_simulation_ne_voit_jamais_d_obstacle() -> None:
     assert serial.get_distance_cm() == 200
 
 
-# --- Loi de vitesse --------------------------------------------------------------------------
+# Loi de vitesse
 
 def caps(*readings: Optional[int]) -> float:
     guard = ObstacleGuard()
@@ -120,7 +120,7 @@ def test_mesures_revenues_reprennent_effet() -> None:
 
 
 def test_echo_manque_ne_relance_pas_le_robot() -> None:
-    """Un écho manqué se lit 200 cm : il ne doit pas effacer un obstacle proche."""
+    """Un écho raté donne 200 cm, ça ne doit pas effacer un obstacle proche."""
     assert caps(30, 200) == caps(30)
     assert caps(30, 200, 200) == caps(30)
     assert caps(30, 200, 200, 200) == math.inf, "repart une fois l'obstacle réellement parti"
@@ -146,7 +146,7 @@ def test_etats_pour_l_interface() -> None:
     assert guard.status == (ObstacleState.BLOCKED, 18)
 
 
-# --- Commande des moteurs --------------------------------------------------------------------
+# Commande des moteurs
 
 class WheelRecorder:
     def __init__(self) -> None:
@@ -183,7 +183,7 @@ def test_a_l_arret_la_correction_ne_fait_pas_pivoter() -> None:
 
 
 def test_correction_proportionnelle_a_la_vitesse() -> None:
-    """La trajectoire reste la même : le rapport entre correction et vitesse ne change pas."""
+    """Même trajectoire : le rapport entre correction et vitesse ne change pas."""
     control, serial = _control()
     control.aim(5.0, 1.0)
     fl, fr, _, _ = serial.commands[-1]
@@ -205,7 +205,7 @@ def test_repart_en_douceur_apres_l_obstacle() -> None:
 
 
 def test_rotation_sur_place_non_bloquee() -> None:
-    """Un virage n'avance pas vers l'obstacle, et il faut pouvoir s'en écarter."""
+    """Un virage ne rapproche pas de l'obstacle et il faut pouvoir s'en écarter."""
     control, serial = _control()
     control.set_speed_cap(0.0)
     t = 5.0
@@ -225,10 +225,10 @@ def test_temps_de_conduite_fige_a_l_arret() -> None:
     assert control.drive_time == before
 
 
-# --- Comportement complet, sur un robot simulé qui avance vraiment -----------------------------
+# Comportement complet, sur un robot simulé qui avance vraiment
 
 class Robot(RobotConnection):
-    """Robot sur une ligne droite : sa position suit les vitesses de roue envoyées."""
+    """Robot sur une ligne droite, sa position dépend des vitesses de roue envoyées."""
 
     def __init__(self, cm_per_second_at_full_speed: float, obstacle_at: float = 150.0, dt: float = 0.064,
                  max_steps: int = 2000) -> None:
@@ -268,7 +268,7 @@ class Robot(RobotConnection):
         self.speeds.append((self.distance, self.wheel))
 
     def get_distance_cm(self) -> Optional[int]:
-        return min(200, int(self.distance))  # l'Arduino tronque au centimètre
+        return min(200, int(self.distance))  # l'Arduino tronque au cm
 
 
 class LineAhead(ImageProcessor):
@@ -305,7 +305,7 @@ def _drive_to_obstacle(gain: float, base_speed: float = utils.BASE_SPEED, **kwar
 def test_s_arrete_a_20_cm_de_l_obstacle(gain: float, base_speed: float) -> None:
     robot, _ = _drive_to_obstacle(gain, base_speed)
     assert robot.wheel == 0.0
-    # La mesure tronque (20 cm lus pour 20,x cm), et il reste une période de boucle à vitesse lente.
+    # La mesure est tronquée (20 cm lus pour 20,x cm) et il reste une période de boucle à vitesse lente
     overshoot = utils.FORWARD_SPEED * gain * robot.dt
     assert 20.0 - overshoot <= robot.distance < 21.0
 
@@ -315,7 +315,7 @@ def test_vitesse_de_croisiere_jusqu_a_60_cm_puis_decroissante() -> None:
     far = [speed for distance, speed in robot.speeds[20:] if distance > 61.0]
     assert far and all(speed == pytest.approx(utils.BASE_SPEED, abs=0.02) for speed in far)
 
-    # int(59,9) = 59 : le freinage commence dès que le robot passe sous 60 cm.
+    # int(59,9) = 59, donc le freinage commence dès qu'on passe sous 60 cm
     braking = [(d, s) for d, s in robot.speeds if 21.0 < d < 59.0]
     assert braking
     assert all(s < utils.BASE_SPEED for _, s in braking)
@@ -374,7 +374,7 @@ def test_livraison_terminee_sans_mesure_du_capteur() -> None:
 
 
 def test_pas_de_ligne_perdue_quand_bloque_devant_un_obstacle() -> None:
-    """Plusieurs secondes à l'arrêt sans voir la ligne : ce n'est pas une sortie de piste."""
+    """Plusieurs secondes à l'arrêt sans voir la ligne, ce n'est pas une sortie de piste."""
     robot = Robot(80.0, obstacle_at=20.0, max_steps=200)
     line_lost = run_figure_eight(robot, robot, LineAhead(lambda i: False), Recorder())  # type: ignore[arg-type]
     assert line_lost is False
@@ -398,7 +398,7 @@ class CrossingAtFrame(LineAhead):
 
 
 def test_approche_d_un_croisement_figee_pendant_le_blocage() -> None:
-    """Le robot bloqué n'avance pas vers le centre : il finit l'approche une fois libéré."""
+    """Le robot bloqué n'avance pas vers le centre, il finit l'approche une fois libéré."""
     class Blocking(Robot):
         def get_distance_cm(self) -> Optional[int]:
             return 20 if 12 <= self.steps < 24 else 200  # moins que OBSTACLE_CONFIRM_SECONDS
@@ -423,7 +423,7 @@ def test_virage_au_depart_malgre_un_obstacle_proche() -> None:
     assert robot.position == 0.0 or abs(robot.position) < 1e-9, "aucune avance vers l'obstacle"
 
 
-# --- Interface -------------------------------------------------------------------------------
+# Interface
 
 def test_etat_du_capteur_publie_au_repos_et_arret_interface() -> None:
     class Idle(Robot):

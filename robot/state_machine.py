@@ -1,4 +1,4 @@
-"""Machine à états du robot : attente d'un ordre, livraison sur la grille et parcours en 8."""
+"""Machine à états du robot (attente d'un ordre, livraison sur la grille, parcours en 8)."""
 from __future__ import annotations
 
 from typing import Optional
@@ -36,13 +36,13 @@ def wait_for_mission(
     last_mission: Optional[Mission] = None,
     line_lost: bool = False,
 ) -> Optional[Order]:
-    """Moteurs coupés, diffuse la caméra jusqu'à un ordre de l'interface (None : fin du programme)."""
+    """Attend un ordre de l'interface, moteurs coupés, en diffusant la caméra. None si le programme se termine."""
     obstacle = ObstacleGuard()
     while connection.step():
         if telemetry.take_map_reset():
             grid.clear_blocked()
             last_mission, line_lost = None, False  # plus d'arête, de chemin ni d'alerte affichés
-        obstacle.update(serial.get_distance_cm())  # pour vérifier le capteur avant de démarrer
+        obstacle.update(serial.get_distance_cm())  # pour voir si le capteur marche avant de partir
         frame = connection.get_frame()
         line_detected = is_intersection = False
         if frame is not None:
@@ -64,18 +64,18 @@ def serve_missions(
     telemetry: TelemetryServer,
     processor: Optional[ImageProcessor] = None,
 ) -> None:
-    """Exécute les ordres de l'interface, jusqu'à la fin du programme."""
+    """Boucle principale : on exécute les ordres de l'interface jusqu'à la fin du programme."""
     processor = processor or ImageProcessor()
     last_mission: Optional[Mission] = None
     line_lost = False
-    grid = Grid(GRID_SIZE)  # partagé entre les missions : un obstacle reste là d'une mission à l'autre
+    grid = Grid(GRID_SIZE)  # gardée entre les missions car un obstacle ne disparaît pas tout seul
     while True:
         request = wait_for_mission(connection, serial, telemetry, processor, grid, last_mission, line_lost)
         if request is None:
             return
         try:
             if isinstance(request, FigureEightRequest):
-                last_mission = None  # la livraison précédente ne doit plus être affichée
+                last_mission = None  # pour ne plus afficher l'ancienne livraison
                 line_lost = run_figure_eight(connection, serial, processor, telemetry)
             else:
                 line_lost = False
@@ -83,7 +83,7 @@ def serve_missions(
                     last_mission = run_state_machine(connection, serial, request.start, request.destination,
                                                      request.heading, processor, telemetry, grid)
                     line_lost = last_mission.line_lost
-                except ValueError as exc:  # destination coupée par des arêtes bloquées
+                except ValueError as exc:  # plus de chemin à cause des arêtes bloquées
                     print(exc)
                     last_mission = Mission([request.start, request.destination], request.heading)
                     last_mission.no_route = True
@@ -92,13 +92,12 @@ def serve_missions(
 
 
 class LineLossWatch:
-    """Surveille la perte de ligne et mémorise la direction de la dernière ligne vue.
+    """Détecte si la ligne reste invisible plus de LINE_LOST_TIMEOUT (en suivi ou en recherche).
 
-    Signale, pendant le suivi ou la recherche, une ligne restée invisible plus de LINE_LOST_TIMEOUT.
-    Mémorise le côté où la ligne a été vue (gauche ou droite) pour orienter la recherche.
-    Le suivi ne se termine que sur une image où la ligne est vue : le compteur est donc
-    toujours à zéro à la reprise suivante, et un virage ou une traversée n'est jamais compté.
-    `now` est `Control.drive_time` : le temps passé bloqué devant un obstacle ne compte pas non plus.
+    Retient aussi de quel côté on a vu la ligne pour la dernière fois, pour chercher du bon côté.
+    Le suivi se termine toujours sur une image avec la ligne, donc le compteur repart de zéro
+    après un virage ou un croisement.
+    now vient de Control.drive_time pour ne pas compter le temps bloqué devant un obstacle.
     """
 
     def __init__(self, default_left: bool = True) -> None:
@@ -106,7 +105,7 @@ class LineLossWatch:
         self.last_turn_left: bool = default_left
 
     def update(self, detection: LineDetection) -> None:
-        """Mémorise la position de la ligne si elle est visible."""
+        """Retient le côté de la ligne si on la voit."""
         if detection.cx is not None:
             half_width = detection.roi_w / 2
             if detection.cx != half_width:
@@ -125,7 +124,7 @@ class LineLossWatch:
 
 
 def _steer(controller: Control, detection: LineDetection, now: float) -> None:
-    """Suit la ligne si elle est vue, sinon continue tout droit à vitesse réduite."""
+    """Suit la ligne si on la voit, sinon tout droit doucement."""
     if detection.cx is not None:
         half_width = detection.roi_w / 2
         controller.aim(now, (detection.cx - half_width) / half_width)
@@ -139,16 +138,16 @@ def run_figure_eight(
     processor: ImageProcessor,
     telemetry: TelemetryServer,
 ) -> bool:
-    """Suit la ligne et traverse les croisements tout droit, jusqu'à l'arrêt demandé par l'interface.
+    """Suit la ligne et passe les croisements tout droit, jusqu'au clic sur Arrêter.
 
-    Renvoie True si le robot s'est arrêté parce qu'il ne voyait plus la ligne.
+    Renvoie True si on s'est arrêté parce que la ligne est perdue.
     """
     controller = Control(serial)
     line_watch = LineLossWatch()
     obstacle = ObstacleGuard()
     robot_state = RobotState.FOLLOWING
     crossing_start = crossing_duration = 0.0
-    # Le robot peut être posé sur le croisement : il ne compte qu'une fois quitté.
+    # Le robot peut démarrer sur un croisement, il faut d'abord l'avoir quitté pour compter le suivant
     intersection_armed = False
 
     controller.set_speed_cap(obstacle.update(serial.get_distance_cm()))
@@ -163,7 +162,7 @@ def run_figure_eight(
             controller.set_speed_cap(obstacle.update(serial.get_distance_cm()))
             current_time = connection.get_time()
             frame = connection.get_frame()
-            if frame is None:  # image perdue : on ne roule pas à l'aveugle
+            if frame is None:  # pas d'image, on ne roule pas à l'aveugle
                 controller.stop(current_time)
                 continue
 
@@ -192,7 +191,7 @@ def run_figure_eight(
                         return True
                     controller.spin(current_time, line_watch.last_turn_left)
             else:
-                # Tout droit : la correction suivrait l'autre branche du croisement.
+                # Pas de correction ici, sinon le robot part sur l'autre branche du croisement
                 controller.forward(current_time)
                 if controller.drive_time - crossing_start > crossing_duration:
                     robot_state = RobotState.FOLLOWING
@@ -216,13 +215,12 @@ def run_state_machine(
     telemetry: Optional[TelemetryServer] = None,
     grid: Optional[Grid] = None,
 ) -> Mission:
-    """Va de `start_pos` à `end_pos`, y fait un tour complet (la livraison), puis fait demi-tour
-    et revient, sauf arrêt demandé par l'interface.
+    """Mission de livraison : aller à end_pos, faire un tour complet, puis revenir à start_pos.
 
-    Arrêté par un obstacle sur une ligne, le robot retire l'arête du graphe, revient à son dernier
-    nœud et repart par un nouveau chemin. La mission s'arrête s'il n'y en a aucun.
+    Si un obstacle bloque la ligne, on enlève l'arête du graphe, on retourne au dernier noeud et
+    on repart par un autre chemin. S'il n'y a plus de chemin, la mission s'arrête.
 
-    Renvoie la mission (et ses flags).
+    Renvoie la mission avec ses flags.
     """
     controller = Control(serial)
     line_watch = LineLossWatch()
@@ -240,7 +238,7 @@ def run_state_machine(
     nav.display_path(grid, path)
     mission = Mission(path, robot_dir)
 
-    # Posé sur le croisement de départ, le robot ne peut pas le voir : il y est considéré comme arrêté.
+    # Au départ le robot est sur le croisement et la caméra ne peut pas le voir, donc on part de cet état
     robot_state = RobotState.STOP_ON_INTERSECTION
     action_start_time = connection.get_time()
     approach_start = 0.0
@@ -248,7 +246,7 @@ def run_state_machine(
     delivery_half_turns = 0
     state_after_delivery = RobotState.FOLLOWING
     blocked_since: Optional[float] = None
-    # Retour à un nœud trop proche pour que la caméra le voie : durée d'avance à l'aveugle.
+    # Durée d'avance à l'aveugle quand le noeud est trop près pour que la caméra le voie
     blind_return = 0.0
     # Empêche de détecter plusieurs fois la même intersection (dont celle de départ, si elle est visible)
     intersection_armed = False
@@ -272,7 +270,7 @@ def run_state_machine(
             controller.set_speed_cap(obstacle.update(serial.get_distance_cm()))
             current_time = connection.get_time()
             frame = connection.get_frame()
-            if frame is None:  # image perdue : on ne roule pas à l'aveugle
+            if frame is None:  # pas d'image, on ne roule pas à l'aveugle
                 controller.stop(current_time)
                 continue
 
@@ -290,7 +288,7 @@ def run_state_machine(
             elif current_time - blocked_since > utils.OBSTACLE_CONFIRM_SECONDS:
                 blocked_since = None
                 node, blocked_node = mission.position, mission.next_node
-                if blocked_node == node:  # déjà en retour vers ce nœud : obstacle des deux côtés
+                if blocked_node == node:  # on revenait déjà vers ce noeud, donc obstacle des deux côtés
                     print("Obstacle sur le retour au nœud : mission arrêtée.")
                     mission.no_route = True
                     break
@@ -311,14 +309,14 @@ def run_state_machine(
                     robot_state = RobotState.TURNING_180
                     line_watch.last_turn_left = False
                     action_start_time = current_time
-                    # La caméra voit à la distance parcourue pendant l'approche, pas plus près.
+                    # La caméra voit le croisement à partir de la distance d'approche, pas plus près
                     seen_from = utils.FORWARD_SPEED * utils.APPROACH_DURATION
                     blind_return = controller.travel / utils.FORWARD_SPEED if controller.travel < seen_from else 0.0
-                    # Le nœud doit pouvoir être détecté sur le retour, sauf si on y retourne à l'aveugle :
-                    # il serait alors compté une seconde fois en le quittant.
+                    # En retour à l'aveugle on désarme la détection, sinon le noeud est compté
+                    # une 2e fois quand on le quitte
                     intersection_armed = blind_return == 0.0
                 else:
-                    robot_state = RobotState.STOP_ON_INTERSECTION  # n'a pas quitté le nœud
+                    robot_state = RobotState.STOP_ON_INTERSECTION  # il n'a pas encore quitté le noeud
                 publish(cx is not None, is_intersection)
                 continue
 
@@ -389,7 +387,7 @@ def run_state_machine(
                     if mission.destination_reached and not was_at_destination:
                         print("Destination atteinte ! Demi-tour, retour au point de départ.")
                         if mission.rerouted:
-                            # Refaire l'aller à l'envers repasserait par les détours : on recalcule.
+                            # L'aller à l'envers repasserait par les détours, donc on recalcule
                             path = nav.generate_path(grid, mission.destination, mission.start, robot_dir)
                             if not path:
                                 print("Aucun chemin de retour : mission arrêtée.")
@@ -415,7 +413,7 @@ def run_state_machine(
                             line_watch.reset_timer()
                             seeking_after_turn = False
                         if mission.destination_reached and not was_at_destination:
-                            # Le tour complet ramène le robot dans le sens d'arrivée : le demi-tour reste à faire.
+                            # Après le tour complet le robot est dans le même sens, il reste le demi-tour à faire
                             state_after_delivery = robot_state
                             robot_state = RobotState.DELIVERING
                             delivery_half_turns = utils.DELIVERY_HALF_TURNS

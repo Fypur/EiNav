@@ -1,11 +1,10 @@
-"""Réglages modifiables depuis l'interface web, appliqués tout de suite et conservés au redémarrage.
+"""Réglages qu'on peut changer depuis l'interface web. Ils s'appliquent direct et restent après un redémarrage.
 
-Les valeurs par défaut restent dans les fichiers utils.py. settings.json (non versionné) ne contient
-que celles qui en diffèrent : modifier un utils.py reste donc pris en compte pour tout réglage
-qui n'a pas été changé depuis l'interface.
+Les valeurs par défaut sont dans les utils.py. settings.json (pas versionné) garde seulement
+les valeurs qui ont changé, donc modifier un utils.py marche toujours pour les autres réglages.
 
-Pour ajouter un réglage : ajouter une entrée à SETTINGS, avec des bornes qui ne peuvent pas
-faire planter le robot. Le code doit lire la constante sous la forme `utils.NOM`.
+Pour ajouter un réglage, ajouter une ligne dans SETTINGS avec des bornes qui ne font pas
+planter le robot. Dans le code, il faut lire la constante avec utils.NOM.
 """
 from __future__ import annotations
 
@@ -86,7 +85,7 @@ _lock = threading.Lock()
 def _validated(setting: Setting, value: object) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{setting.label} : valeur numérique attendue.")
-    # Écrit ainsi, le test rejette aussi NaN, l'infini et les entiers géants qu'accepte json.loads.
+    # Écrit comme ça, le test rejette aussi NaN, l'infini et les entiers énormes que json.loads accepte
     if not setting.minimum <= value <= setting.maximum:
         raise ValueError(f"{setting.label} : doit être entre {setting.minimum:g} et {setting.maximum:g}.")
     if setting.integer:
@@ -97,7 +96,7 @@ def _validated(setting: Setting, value: object) -> float:
 
 
 def describe() -> List[Dict[str, Any]]:
-    """Réglages et valeurs courantes, pour l'interface."""
+    """Liste des réglages avec leurs valeurs, pour l'interface."""
     return [
         {"key": s.key, "group": s.group, "label": s.label, "help": s.help, "unit": s.unit,
          "min": s.minimum, "max": s.maximum, "step": s.step,
@@ -107,7 +106,7 @@ def describe() -> List[Dict[str, Any]]:
 
 
 def _save() -> None:
-    """Écriture atomique : une coupure de courant ne peut pas laisser un fichier à moitié écrit."""
+    """On écrit dans un fichier temporaire puis on remplace, pour éviter un fichier à moitié écrit si le courant coupe."""
     overrides = {s.key: getattr(s.module, s.key) for s in SETTINGS
                  if getattr(s.module, s.key) != _DEFAULTS[s.key]}
     temporary = SETTINGS_FILE.with_suffix(".tmp")
@@ -119,7 +118,7 @@ def _save() -> None:
 
 
 def update(values: Mapping[str, object]) -> None:
-    """Applique des réglages : tous, ou aucun si l'un d'eux est invalide (ValueError)."""
+    """Applique les réglages. Si l'un d'eux est invalide, ValueError et on n'applique rien."""
     checked = {}
     for key, value in values.items():
         if key not in _BY_KEY:
@@ -137,7 +136,7 @@ def reset(keys: Optional[Iterable[str]] = None) -> None:
 
 
 def load() -> None:
-    """Recharge les réglages enregistrés. Une valeur invalide est ignorée : le robot doit démarrer."""
+    """Recharge les réglages enregistrés. On ignore les valeurs invalides pour que le robot démarre quand même."""
     try:
         saved = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -153,7 +152,7 @@ def load() -> None:
             print(f"[réglages] ignoré : réglage inconnu {key}.")
             continue
         try:
-            # Pas de _save() ici : une coupure au démarrage ne doit pas faire perdre de réglages.
+            # Pas de _save() ici, sinon une coupure au démarrage peut faire perdre des réglages
             setattr(_BY_KEY[key].module, key, _validated(_BY_KEY[key], value))
         except ValueError as exc:
             print(f"[réglages] ignoré : {exc}")

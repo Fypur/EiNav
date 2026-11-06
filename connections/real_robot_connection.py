@@ -11,28 +11,28 @@ from vision.camera_pi import RobotCamera
 
 
 class RealRobotConnection(RobotConnection):
-    """Manages the connection on the physical robot: stepping time, giving time, and capturing camera frames."""
+    """Connexion au vrai robot : temps et images de la caméra."""
 
     def __init__(self) -> None:
         self.camera = RobotCamera()
 
     def get_time(self) -> float:
-        """Returns current epoch time in seconds."""
+        """Temps actuel en secondes."""
         return time.time()
 
     def step(self) -> bool:
-        """Paces execution for one time step."""
+        """Attend un pas de temps."""
         time.sleep(utils.TIME_STEP_MS / 1000.0)
         return True
 
     def get_frame(self) -> Optional[np.ndarray]:
-        """Captures a BGR frame from the Raspberry Pi camera."""
+        """Image BGR de la caméra du Pi."""
         return self.camera.read()
 
     def publish_frame(self, frame: np.ndarray) -> None:
-        """Sends the processed image to the video stream."""
+        """Envoie l'image traitée dans le flux vidéo."""
         self.camera.publish(frame)
 
     def close(self) -> None:
-        """Closes the camera."""
+        """Ferme la caméra."""
         self.camera.close()

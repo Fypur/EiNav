@@ -1,4 +1,4 @@
-"""Tests de vision/camera_pi.py, avec des caméras factices (aucun matériel requis)."""
+"""Tests de vision/camera_pi.py avec de fausses caméras (pas besoin du matériel)."""
 from __future__ import annotations
 
 import http.client
@@ -27,7 +27,7 @@ BLOCKED = {"picamera": None, "picamera.array": None, "picamera2": None, "libcame
 
 
 def gradient() -> np.ndarray:
-    """Image dont chaque ligne a une valeur différente, pour repérer un flip vertical."""
+    """Image avec une valeur différente par ligne, pour voir si elle est retournée."""
     frame = np.zeros((128, 160, 3), np.uint8)
     frame[:, :, :] = np.arange(128, dtype=np.uint8)[:, None, None]
     return frame
@@ -40,7 +40,7 @@ def wait_until(condition: Any, timeout: float = 3.0) -> None:
         time.sleep(0.01)
 
 
-# --- FrameStreamer ---------------------------------------------------------------------------
+# FrameStreamer
 
 @pytest.fixture
 def streamer() -> Any:
@@ -75,7 +75,7 @@ def test_publish_ne_reveille_personne_sans_client(streamer: FrameStreamer) -> No
 
 
 def test_publish_ne_bloque_pas_pendant_l_encodage(streamer: FrameStreamer) -> None:
-    """C'est tout l'intérêt : un encodage lent ne doit pas ralentir la boucle du robot."""
+    """Un encodage lent ne doit pas ralentir la boucle du robot."""
     streamer.publish(gradient())
     entered, release = threading.Event(), threading.Event()
     real_imencode = cv2.imencode
@@ -148,7 +148,7 @@ def test_flux_compte_ses_clients_et_partage_le_cache(streamer: FrameStreamer) ->
 
     for response in responses:
         response.close()
-    # Le départ d'un client n'est détecté qu'à l'écriture suivante : on continue de publier.
+    # On ne voit le départ d'un client qu'à l'écriture suivante, donc on continue de publier
     wait_until(lambda: streamer._clients == 0 or streamer.publish(gradient()))
 
 
@@ -178,7 +178,7 @@ def test_fermeture_avec_client_connecte() -> None:
     connection.close()
 
 
-# --- Sources d'images ------------------------------------------------------------------------
+# Sources d'images
 
 def fake_picamera(calls: Dict[str, Any]) -> Dict[str, types.ModuleType]:
     class PiCamera:
@@ -314,7 +314,7 @@ def test_miroir_horizontal_conserve(monkeypatch: pytest.MonkeyPatch) -> None:
     assert frame is not None and frame[0, 0, 0] == 0 and frame[0, -1, 0] == 255
 
 
-# --- Exécution directe -----------------------------------------------------------------------
+# Exécution directe
 
 def test_script_executable_directement(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: Any) -> None:
     capture = mock.MagicMock()

@@ -77,7 +77,7 @@ class Arduino:
         vit1, vit2, vit3, vit4 = retrCmdi(self.serialport, b'P')
         return vit1, vit2, vit3, vit4
 
-    #   distance mesurée par le capteur ultrason, en cm (None : pas de réponse de l'Arduino)
+    #   distance mesuree par le capteur ultrason en cm (None si l'Arduino ne repond pas)
     def GetDistance(self) -> Optional[int]:
         reply = retrCmdli(self.serialport, b'S')
         return None if reply is None else reply[1]

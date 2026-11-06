@@ -9,7 +9,7 @@ from connections.base import RobotConnection
 
 
 class WebotsConnection(RobotConnection):
-    """Manages the connection to Webots: stepping through time, giving time, and capturing camera frames."""
+    """Connexion à Webots : temps de la simulation et images de la caméra."""
 
     def __init__(self, time_step: int = utils.TIME_STEP_MS, camera_name: str = utils.WEBOTS_CAMERA_NAME) -> None:
         self.time_step = time_step
@@ -18,15 +18,15 @@ class WebotsConnection(RobotConnection):
         self.camera.enable(self.time_step)
 
     def get_time(self) -> float:
-        """Returns current simulation time in seconds."""
+        """Temps de la simulation en secondes."""
         return self.robot.getTime()
 
     def step(self) -> bool:
-        """Steps the simulation forward by one time step. Returns False if simulation has ended."""
+        """Avance la simulation d'un pas. False si la simulation est finie."""
         return self.robot.step(self.time_step) != -1
 
     def get_frame(self) -> np.ndarray:
-        """Captures a BGR frame from the Webots camera."""
+        """Image BGR de la caméra de Webots."""
         raw_data = self.camera.getImage()
         image = np.frombuffer(raw_data, np.uint8).reshape(
             (self.camera.getHeight(), self.camera.getWidth(), 4)

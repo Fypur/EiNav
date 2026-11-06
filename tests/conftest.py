@@ -1,4 +1,4 @@
-"""Isole les tests : ils ne lisent ni n'écrivent le settings.json du robot, et rétablissent les réglages."""
+"""Pour que les tests ne touchent pas au settings.json du robot et remettent les réglages à la fin."""
 from __future__ import annotations
 
 import sys

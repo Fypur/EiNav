@@ -1,4 +1,0 @@
-streamlit>=1.58,<2
-plotly>=5.20,<7
-networkx>=3.2,<5
-pandas>=2.1,<4

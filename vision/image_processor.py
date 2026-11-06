@@ -9,7 +9,7 @@ from vision import utils
 
 
 class LineDetection(NamedTuple):
-    cx: Optional[int]  # abscisse du centre de la ligne (None : pas de ligne)
+    cx: Optional[int]  # abscisse du centre de la ligne (None si pas de ligne)
     is_intersection: bool
     roi_w: int
     roi_top: int  # ordonnée du haut de la zone d'intérêt dans l'image
@@ -17,7 +17,7 @@ class LineDetection(NamedTuple):
 
 
 def _widest_run(mask: np.ndarray) -> int:
-    """Plus grand nombre de pixels blancs consécutifs sur une même ligne de l'image binaire."""
+    """Plus grande suite de pixels blancs sur une même ligne de l'image binaire."""
     widest = 0
     for row in mask > 0:
         edges = np.flatnonzero(np.diff(np.concatenate(([False], row, [False])).astype(np.int8)))
@@ -28,27 +28,27 @@ def _widest_run(mask: np.ndarray) -> int:
 
 class ImageProcessor:
     def process_frame(self, image_bgr: np.ndarray) -> LineDetection:
-        """Applique le pipeline de traitement sur l'image BGR et retourne la détection."""
+        """Traite l'image BGR et renvoie la détection."""
         h, w = image_bgr.shape[:2]
 
-        # Définition de la Zone d'Intérêt (tiers inférieur)
+        # Zone d'intérêt : le bas de l'image
         roi_top = int(h * utils.ROI_TOP_RATIO)
         roi = image_bgr[roi_top:h, 0:w]
         roi_h, roi_w = roi.shape[:2]
 
-        # --- Etape 1 : Flou ---
+        # Etape 1 : flou
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         blur_roi = cv2.GaussianBlur(gray_roi, utils.BLUR_KERNEL, 0)
 
-        # --- Etape 2 : Seuil ---
+        # Etape 2 : seuil
         _, thresh_roi = cv2.threshold(blur_roi, utils.BINARY_THRESHOLD, 255, cv2.THRESH_BINARY)
 
-        # --- Etape 3 : Morphologie ---
+        # Etape 3 : morphologie
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, utils.MORPH_KERNEL)
         morphed = cv2.morphologyEx(thresh_roi, cv2.MORPH_CLOSE, kernel)
         morphed = cv2.morphologyEx(morphed, cv2.MORPH_OPEN, kernel)
 
-        # --- Etape 4 : Reconnaissance des contours et intersections ---
+        # Etape 4 : contours et intersections
         contours, _ = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         cx: Optional[int] = None
@@ -62,8 +62,8 @@ class ImageProcessor:
                 touches_left = np.any(morphed[:, 0] > 0)
                 touches_right = np.any(morphed[:, roi_w - 1] > 0)
 
-                # Une ligne en biais qui passe par un coin touche aussi le haut, le bas et un côté :
-                # seul un croisement a en plus une large bande horizontale.
+                # Une ligne en biais qui passe par un coin touche aussi le haut, le bas et un côté,
+                # donc on vérifie en plus la large bande horizontale du croisement
                 if touches_top and touches_bottom and (touches_left or touches_right):
                     is_intersection = _widest_run(morphed) >= utils.INTERSECTION_MIN_WIDTH_RATIO * roi_w
 
@@ -74,7 +74,7 @@ class ImageProcessor:
         return LineDetection(cx, bool(is_intersection), roi_w, roi_top, morphed)
 
     def annotate(self, image_bgr: np.ndarray, detection: LineDetection) -> np.ndarray:
-        """Image traitée pour le tableau de bord : zone d'intérêt, ligne détectée et son centre."""
+        """Image pour l'interface, avec la zone d'intérêt, la ligne et son centre."""
         annotated = image_bgr.copy()
         h, w = annotated.shape[:2]
         roi = annotated[detection.roi_top:h, 0:w]

@@ -14,9 +14,9 @@
   main { display:grid; grid-template-columns:minmax(0, 1fr); gap:12px; padding:12px; }
   @media (min-width:640px) {
     main { grid-template-columns:repeat(2, minmax(0, 1fr)); }
-    main.line-mode #camera { grid-column:span 2; }  /* sans grille, l'image prend sa place */
+    main.line-mode #camera { grid-column:span 2; }  /* pas de grille, donc l'image prend sa place */
   }
-  /* Écran large : réglages à côté de la grille et de l'image, pour voir l'effet d'un changement. */
+  /* Sur grand écran on met les réglages à côté de la grille et de l'image pour voir l'effet direct */
   @media (min-width:1100px) {
     main { grid-template-columns:repeat(2, minmax(0, 1fr)) minmax(0, 2fr); align-items:start; }
     #tuning { grid-column:3 !important; grid-row:2 / span 2; }
@@ -25,7 +25,7 @@
   h2 { margin:0 0 8px; font-size:.8rem; letter-spacing:.08em; text-transform:uppercase; color:var(--muted); }
   svg { display:block; width:100%; max-height:62vh; }
   iframe { display:block; width:100%; aspect-ratio:5/4; border:0; border-radius:8px; background:#000; }
-  /* Toujours à l'écran : on règle le robot pendant qu'il roule, il faut pouvoir l'arrêter. */
+  /* Toujours visible : on règle le robot pendant qu'il roule, il faut pouvoir l'arrêter */
   #bar { position:sticky; top:0; z-index:1; display:flex; align-items:center; gap:10px; padding:8px 12px;
          background:var(--bg); border-bottom:1px solid var(--line); }
   #chips { display:flex; flex-wrap:wrap; gap:6px; flex:1; min-width:0; }
@@ -156,11 +156,12 @@
   const $ = (id) => document.getElementById(id);
   let latest = null;        // dernier état reçu du robot
   let nextPick = "start";   // champ rempli par le prochain clic sur la grille
+  let syncHeading = true;   // recopier l'orientation du robot au prochain retour en attente
   let sending = false;
   let drawn = "";
 
-  // Un flux MJPEG ne finit jamais de charger : on l'ouvre après le chargement de la page,
-  // sinon l'onglet (et l'iframe de Streamlit) resterait « en cours de chargement ».
+  // Un flux MJPEG ne finit jamais de charger, donc on l'ouvre après le chargement de la page
+  // sinon l'onglet reste en « chargement »
   window.addEventListener("load", () => {
     document.getElementById("video").src =
       `${location.protocol}//${location.hostname}:${STREAM_PORT}/`;
@@ -179,7 +180,7 @@
 
   function drawGrid(status) {
     const running = status.state !== "IDLE";
-    // À l'arrêt, la grille montre le choix en cours ; pendant une mission, celle du robot.
+    // À l'arrêt la grille montre le choix en cours, en mission celle du robot
     const start = running ? status.start : parseNode($("start").value);
     const destination = running ? status.destination : parseNode($("destination").value);
     const signature = JSON.stringify([status.state, status.route, status.position, status.heading, start, destination,
@@ -248,7 +249,7 @@
   function refreshControls() {
     const online = latest !== null;
     const running = online && latest.state !== "IDLE";
-    // En mission, la page montre le mode du robot, même s'il a été lancé depuis un autre appareil.
+    // En mission on affiche le mode du robot, même s'il a été lancé depuis un autre appareil
     if (running) for (const input of modeInputs) input.checked = input.value === latest.mode;
     const lineMode = selectedMode() === "HUIT";
     $("layout").classList.toggle("line-mode", lineMode);
@@ -315,7 +316,7 @@
   $("reset-map").addEventListener("click", () => command("map/reset", {}));
   for (const id of ["start", "destination"]) $(id).addEventListener("change", refreshControls);
 
-  // Position du clic plutôt que l'élément touché : la grille est redessinée pendant le clic.
+  // On utilise la position du clic et pas l'élément car la grille est redessinée pendant le clic
   svg.addEventListener("click", (event) => {
     if (!latest || latest.state !== "IDLE") return;
     const point = new DOMPoint(event.clientX, event.clientY).matrixTransform(svg.getScreenCTM().inverse());
@@ -345,6 +346,13 @@
         const s = await response.json();
         latest = s;
         fillNodes(s.grid_nodes);
+        // Une seule fois par mission, sinon on écrase le choix de l'utilisateur à chaque état reçu
+        if (s.state !== "IDLE") {
+          syncHeading = true;
+        } else if (syncHeading) {
+          syncHeading = false;
+          if (s.heading) $("heading").value = s.heading;
+        }
         if (!settingsLoaded) loadSettings().catch(() => {});
         refreshControls();
         chip("link", "En direct", "on");
@@ -372,7 +380,7 @@
     setTimeout(poll, POLL_MS);
   }
 
-  // --- Réglages ------------------------------------------------------------------------------
+  // Réglages
   const SEND_DELAY_MS = 200;
   const inputs = {};            // clé -> éléments de la ligne du réglage
   const pending = {};           // valeurs pas encore envoyées au robot
@@ -433,7 +441,7 @@
         const value = Number(number.value);
         if (number.value === "" || !Number.isFinite(value)) { renderSettings(); return; }
         const clamped = Math.min(s.max, Math.max(s.min, value));
-        number.value = clamped;   // avec Entrée le champ garde le focus : renderSettings ne le corrigerait pas
+        number.value = clamped;   // avec Entrée le champ garde le focus, renderSettings ne le corrigerait pas
         queueSetting(s.key, clamped);
       });
       undo.addEventListener("click", () => sendSettings("settings/reset", { keys: [s.key] }));
@@ -450,7 +458,7 @@
       row.classList.toggle("changed", changed);
       undo.hidden = !changed;
       undo.title = `Valeur par défaut : ${s.default}`;
-      if (s.key in pending) continue;   // ne pas écraser ce que l'utilisateur est en train de saisir
+      if (s.key in pending) continue;   // pour ne pas écraser ce que l'utilisateur est en train de taper
       slider.value = s.value;
       if (document.activeElement !== number) number.value = Number(s.value).toFixed(decimals(s.step));
     }
@@ -501,7 +509,7 @@
     renderSettings();
   }
 
-  // Deux clics : un geste malheureux ne doit pas effacer des réglages trouvés à la main.
+  // Deux clics pour ne pas effacer par erreur des réglages trouvés à la main
   $("reset-all").addEventListener("click", () => {
     if (resetArmed === null) {
       $("reset-all").textContent = "Confirmer ?";

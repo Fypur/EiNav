@@ -1,4 +1,4 @@
-"""Modes de mission et états de la machine à états du robot."""
+"""Modes de mission et états du robot."""
 from enum import Enum, auto
 
 
@@ -8,13 +8,13 @@ class Mode(Enum):
 
 
 class RobotState(Enum):
-    IDLE = auto()  # moteurs coupés, en attente d'un ordre de l'interface
+    IDLE = auto()  # moteurs coupés, on attend un ordre
     FOLLOWING = auto()
-    SEARCHING_LINE = auto()  # recherche de la ligne perdue
+    SEARCHING_LINE = auto()  # on cherche la ligne perdue
     APPROACHING_INTERSECTION = auto()
     STOP_ON_INTERSECTION = auto()
     TURNING_90 = auto()
     TURNING_MINUS_90 = auto()
     TURNING_180 = auto()
-    DELIVERING = auto()  # tour complet sur le point de livraison, avant le retour
+    DELIVERING = auto()  # tour complet au point de livraison avant de repartir
     STOPPED = auto()

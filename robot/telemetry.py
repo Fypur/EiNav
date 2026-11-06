@@ -1,4 +1,4 @@
-"""Tableau de bord du robot : état en JSON, page de commande et ordres de l'interface.
+"""Serveur HTTP du robot pour l'interface (état en JSON, page de commande, ordres).
 
     http://<IP_du_Pi>:8001/            choix du mode, grille en direct et image traitée
     http://<IP_du_Pi>:8001/state.json  état courant du robot
@@ -10,19 +10,16 @@
     POST /settings                     {"values": {"KP": 0.2}}, appliqué tout de suite
     POST /settings/reset               {"keys": ["KP"]}, ou {} pour tout réinitialiser
 
-Le serveur tourne dans un thread du programme du robot : il dépose les ordres, et la boucle
-du robot les lit. Aucune authentification : à n'utiliser que sur un réseau de confiance.
+Le serveur tourne dans un thread à part. Il dépose les ordres et la boucle du robot vient les lire.
+Il n'y a pas d'authentification, à utiliser seulement sur un réseau de confiance.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import socket
-import subprocess
 import sys
 import threading
-import time
 import webbrowser
 from dataclasses import asdict, dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,7 +31,7 @@ from planning.navigation import Mission, Position
 from planning.utils import GRID_SIZE
 from robot import tuning
 from robot.obstacle import ObstacleState, ObstacleStatus
-from robot.utils import DASHBOARD_PORT, MAX_REQUEST_BYTES, TELEMETRY_PORT
+from robot.utils import MAX_REQUEST_BYTES, TELEMETRY_PORT
 from robot.states import Mode, RobotState
 
 FRONTEND_DIR = Path(__file__).resolve().parents[1] / "frontend"
@@ -49,7 +46,7 @@ class MissionRequest:
 
 @dataclass(frozen=True)
 class FigureEightRequest:
-    """Suivi de ligne sur le parcours en 8, jusqu'à l'arrêt demandé : aucun paramètre."""
+    """Ordre pour lancer le parcours en 8, il n'a pas de paramètres."""
 
 
 Order = Union[MissionRequest, FigureEightRequest]
@@ -74,7 +71,7 @@ def _parse_object(body: bytes) -> Dict[str, Any]:
 
 
 def apply_settings(path: str, body: bytes) -> None:
-    """Exécute une demande de changement de réglages. Lève ValueError avec un message affichable."""
+    """Applique un changement de réglages. ValueError avec le message à afficher si ça ne va pas."""
     data = _parse_object(body)
     if path == "/settings":
         values = data.get("values")
@@ -89,7 +86,7 @@ def apply_settings(path: str, body: bytes) -> None:
 
 
 def parse_mission(body: bytes, grid_nodes: int) -> Order:
-    """Valide un ordre reçu de l'interface. Lève ValueError avec un message affichable."""
+    """Vérifie un ordre reçu de l'interface. ValueError avec le message à afficher si ça ne va pas."""
     data = _parse_object(body)
     mode = data.get("mode", Mode.GRID.name)
     if mode == Mode.HUIT.name:
@@ -111,21 +108,21 @@ class RobotStatus:
     mode: str
     state: str
     grid_nodes: int  # nombre d'intersections par côté
-    start: Optional[Position]  # None : aucune mission lancée depuis le démarrage
+    start: Optional[Position]  # None si aucune mission lancée
     destination: Optional[Position]
     route: List[Position]  # chemin de l'étape en cours (aller ou retour)
-    position: Optional[Position]  # dernier nœud atteint (None : aucune mission lancée)
+    position: Optional[Position]  # dernier noeud atteint, None si aucune mission lancée
     next_node: Optional[Position]
     heading: Optional[str]
     destination_reached: bool
     returned_home: bool
     line_detected: bool
     is_intersection: bool
-    line_lost: bool  # la dernière mission s'est arrêtée faute de voir la ligne
+    line_lost: bool  # dernière mission arrêtée car ligne perdue
     obstacle_state: str
-    obstacle_cm: Optional[int]  # None : aucune mesure valide
+    obstacle_cm: Optional[int]  # None si pas de mesure valide
     blocked_edges: List[Tuple[Position, Position]]  # arêtes retirées du graphe
-    no_route: bool  # la dernière mission s'est arrêtée faute de chemin
+    no_route: bool  # dernière mission arrêtée car plus de chemin
 
 
 def make_status(
@@ -194,10 +191,10 @@ class TelemetryServer:
                 if not 0 <= length <= MAX_REQUEST_BYTES:
                     self._reply(413, "Requête trop longue.")
                     return
-                # Lu avant toute réponse : fermer un socket avec des données non lues envoie
-                # un RST sous Windows, et le client perdrait la réponse.
+                # À lire avant de répondre : sous Windows, fermer le socket avec des données
+                # non lues envoie un RST et le client perd la réponse
                 body = self.rfile.read(length)
-                # Exiger du JSON empêche un autre site de déclencher le robot depuis le navigateur.
+                # On exige du JSON pour qu'un autre site ne puisse pas lancer le robot depuis le navigateur
                 if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
                     self._reply(415, "Requête JSON attendue.")
                     return
@@ -283,7 +280,7 @@ class TelemetryServer:
                 self._stop_requested.set()
 
     def take_mission(self) -> Optional[Order]:
-        """Renvoie l'ordre en attente (None s'il n'y en a pas) et marque la mission comme lancée."""
+        """Récupère l'ordre en attente (None s'il n'y en a pas) et marque la mission comme lancée."""
         with self._lock:
             request, self._pending = self._pending, None
             if request is not None:
@@ -314,14 +311,13 @@ def start_telemetry(port: int = TELEMETRY_PORT) -> Optional[TelemetryServer]:
     try:
         server = TelemetryServer(port)
     except OSError as exc:
-        print(f"[dashboard] tableau de bord désactivé (port {port} indisponible : {exc})")
+        print(f"[interface] désactivée (port {port} indisponible : {exc})")
         return None
-    print(f"[dashboard] commande sans Streamlit : http://{local_ip()}:{port}/")
     return server
 
 
 def local_ip() -> str:
-    """Adresse de cette machine sur le réseau (aucun paquet n'est envoyé)."""
+    """Adresse IP de la machine sur le réseau (connect en UDP n'envoie aucun paquet)."""
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
             probe.connect(("10.255.255.255", 1))
@@ -331,49 +327,14 @@ def local_ip() -> str:
 
 
 def _has_display() -> bool:
-    # Sur un Pi en SSH, webbrowser lancerait un navigateur texte qui bloquerait le terminal.
+    # En SSH sur le Pi, webbrowser lance un navigateur texte qui bloque le terminal
     return os.name == "nt" or sys.platform == "darwin" or bool(
         os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
 
-def _wait_for_interface(port: int, process: Optional["subprocess.Popen[bytes]"], timeout: float) -> bool:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline and (process is None or process.poll() is None):
-        try:
-            socket.create_connection(("127.0.0.1", port), 1.0).close()
-            return True
-        except OSError:
-            time.sleep(0.5)
-    return False
-
-
-def open_interface(
-    process: Optional["subprocess.Popen[bytes]"],
-    port: int = DASHBOARD_PORT,
-    fallback_port: int = TELEMETRY_PORT,
-    timeout: float = 90.0,
-) -> None:
-    """Ouvre l'interface dans le navigateur dès qu'elle répond, si la machine a un écran."""
-    def run() -> None:
-        ready = process is not None and _wait_for_interface(port, process, timeout)
-        target = port if ready else fallback_port
-        print(f"[dashboard] interface prête : http://{local_ip()}:{target}/")
-        if _has_display():
-            webbrowser.open(f"http://localhost:{target}/")
-
-    threading.Thread(target=run, daemon=True).start()
-
-
-def start_dashboard(port: int = DASHBOARD_PORT) -> Optional["subprocess.Popen[bytes]"]:
-    """Lance l'interface Streamlit, accessible depuis le réseau sur http://<IP_du_Pi>:<port>."""
-    if importlib.util.find_spec("streamlit") is None:
-        print("[dashboard] Streamlit n'est pas installé (pip install -r frontend/requirements.txt) : "
-              f"utiliser directement http://{local_ip()}:{TELEMETRY_PORT}/")
-        return None
-    process = subprocess.Popen(
-        [sys.executable, "-m", "streamlit", "run", "app.py",
-         "--server.address", "0.0.0.0", "--server.port", str(port),
-         "--server.headless", "true", "--browser.gatherUsageStats", "false"],
-        cwd=str(FRONTEND_DIR),
-    )
-    return process
+def open_interface(port: int = TELEMETRY_PORT) -> None:
+    """Affiche l'adresse de l'interface et l'ouvre dans le navigateur si la machine a un écran."""
+    print(f"[interface] http://{local_ip()}:{port}/")
+    if _has_display():
+        # Dans un thread car certains navigateurs bloquent jusqu'à leur fermeture
+        threading.Thread(target=webbrowser.open, args=(f"http://localhost:{port}/",), daemon=True).start()

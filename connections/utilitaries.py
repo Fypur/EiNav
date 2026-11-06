@@ -51,11 +51,11 @@ def retrCmdi(arduino: SerialPort, cmd: bytes) -> Tuple[int, int, int, int]: # re
     WaitACK(arduino)
 
 def retrCmdli(arduino: SerialPort, cmd: bytes) -> Optional[Tuple[int, int]]: # retrieve command with 1 long and 1 int
-    """Réponse de Ret2li en mode binaire : long, int, int nul. None si elle n'arrive pas à temps."""
+    """Réponse de Ret2li en binaire (long, int, int nul). None si elle n'arrive pas à temps."""
     arduino.write(cmd)
     reply = arduino.read(8)
     if len(reply) != 8:
-        arduino.reset_input_buffer()  # une fin de réponse tardive serait lue comme un acquittement
+        arduino.reset_input_buffer()  # sinon une fin de réponse en retard est lue comme un acquittement
         return None
     val1, val2, _ = struct.unpack('<lhh', reply)
     return val1, val2

@@ -1,6 +1,6 @@
-"""Point d'entrée du robot : ouvre l'interface, puis attend ses ordres, moteurs coupés.
+"""Programme principal du robot. On ouvre l'interface puis on attend les ordres.
 
-Webots impose que ce fichier porte le nom du dossier du contrôleur.
+Le fichier doit avoir le même nom que le dossier du contrôleur, sinon Webots ne le trouve pas.
 """
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from connections.base import RobotConnection
 from connections.serialpi import Serial
 from robot import tuning
 from robot.state_machine import serve_missions
-from robot.telemetry import open_interface, start_dashboard, start_telemetry
+from robot.telemetry import open_interface, start_telemetry
 
-# Simulation flag
+# True pour lancer sous Webots
 SIMULATION = False
 
 
@@ -32,11 +32,10 @@ def main() -> None:
     tuning.load()
     telemetry = start_telemetry()
     if telemetry is None:
-        # Le robot ne reçoit ses ordres que par cette interface : inutile de continuer sans elle.
+        # Sans interface on ne peut donner aucun ordre au robot, donc on arrête là
         raise SystemExit("Interface indisponible : le programme tourne-t-il déjà ?")
 
-    dashboard = start_dashboard()
-    open_interface(dashboard)
+    open_interface()
     try:
         connection, serial = create_environment(SIMULATION)
         try:
@@ -50,8 +49,6 @@ def main() -> None:
         pass
     finally:
         telemetry.close()
-        if dashboard is not None:
-            dashboard.terminate()
 
 
 if __name__ == "__main__":

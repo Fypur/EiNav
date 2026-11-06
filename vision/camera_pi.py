@@ -1,14 +1,14 @@
 """
-Récupération des images de la caméra du vrai robot (Raspberry Pi)
-et diffusion du flux vidéo vers l'interface utilisateur (frontend/app.py).
+Récupère les images de la caméra du vrai robot (Raspberry Pi)
+et envoie le flux vidéo vers l'interface (frontend/live.html).
 
-Remplace, sur le robot réel, ce que fait Webots dans `detection` :
+Sur le vrai robot, ça remplace ce que fait Webots dans detection :
     cameraData = camera.getImage()
     image = np.frombuffer(cameraData, np.uint8).reshape((h, w, 4))
     image_bgr = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
 
-Ici, read() renvoie directement une image BGR (numpy, hauteur x largeur x 3),
-le même format que `image_bgr` dans `detection`.
+Ici read() renvoie directement une image BGR (numpy, hauteur x largeur x 3),
+comme image_bgr dans detection.
 
 Utilisation :
     from vision.camera_pi import RobotCamera
@@ -18,16 +18,15 @@ Utilisation :
     cam.close()
 
 Flux vidéo (défi 4.1) :
-    La caméra ne peut être ouverte que par un seul programme : c'est donc le programme du
-    robot qui diffuse les images, via un petit serveur HTTP MJPEG lancé dans un thread.
+    Un seul programme peut ouvrir la caméra, donc c'est le programme du robot qui diffuse
+    les images, avec un petit serveur HTTP MJPEG dans un thread.
       http://<IP_du_Pi>:8000/stream.mjpg   flux continu (balise <img> dans l'interface)
       http://<IP_du_Pi>:8000/snapshot.jpg  dernière image
       http://<IP_du_Pi>:8000/              page de test
-    Par défaut, chaque image lue par read() est diffusée. Dès que publish() est appelé,
-    le flux montre uniquement les images passées à publish() (ex. avec ligne et croisements
-    dessinés par-dessus).
+    Par défaut on diffuse chaque image lue par read(). Dès qu'on appelle publish(), le flux
+    montre seulement les images passées à publish() (avec la ligne dessinée par exemple).
 
-Sources essayées dans l'ordre : picamera (vieux Raspbian), picamera2 (Raspbian récent),
+On essaie dans l'ordre : picamera (vieux Raspbian), picamera2 (Raspbian récent),
 webcam OpenCV (pour tester sur PC).
 """
 from __future__ import annotations
@@ -43,7 +42,7 @@ from typing import Any, Optional, Tuple
 import cv2
 import numpy as np
 
-if not __package__:  # lancé directement : python vision/camera_pi.py
+if not __package__:  # si on lance directement python vision/camera_pi.py
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vision.utils import (  # noqa: E402
@@ -62,15 +61,15 @@ img{display:block;width:100vw;height:100vh;object-fit:contain;image-rendering:pi
 
 
 class _HTTPServer(ThreadingHTTPServer):
-    # Sous Windows, SO_REUSEADDR autorise deux serveurs sur le même port : on le désactive
-    # pour que l'erreur « port déjà utilisé » soit bien levée. Sous Linux (Pi), on le garde
-    # pour pouvoir relancer le programme immédiatement.
+    # Sous Windows, SO_REUSEADDR laisse deux serveurs sur le même port, donc on l'enlève pour
+    # avoir l'erreur « port déjà utilisé ». Sous Linux (Pi) on le garde pour pouvoir relancer
+    # le programme tout de suite.
     allow_reuse_address = os.name != "nt"
     daemon_threads = True
 
 
 class FrameStreamer:
-    """Serveur HTTP qui diffuse les dernières images publiées au format MJPEG."""
+    """Serveur HTTP qui diffuse les dernières images en MJPEG."""
 
     def __init__(self, port: int = STREAM_PORT, fps: int = STREAM_FPS, quality: int = JPEG_QUALITY) -> None:
         self.port = port
@@ -82,8 +81,8 @@ class FrameStreamer:
         self._clients = 0
         self._last_publish = 0.0
         self._closed = False
-        # Protège le cache JPEG. Distinct de _cond : encoder en tenant _cond bloquerait
-        # publish(), donc la boucle du robot.
+        # Verrou du cache JPEG. Séparé de _cond car encoder en tenant _cond bloquerait
+        # publish() et donc la boucle du robot
         self._encode_lock = threading.Lock()
         self._jpeg: Optional[bytes] = None
         self._encoded_id = 0
@@ -114,12 +113,12 @@ class FrameStreamer:
         self._thread.start()
 
     def publish(self, frame: Optional[np.ndarray]) -> None:
-        """Rend l'image BGR disponible aux navigateurs. L'encodage JPEG se fait dans les threads HTTP."""
+        """Met l'image BGR à disposition des navigateurs. L'encodage JPEG se fait dans les threads HTTP."""
         if frame is None or self._closed:
             return
         now = time.monotonic()
         if now - self._last_publish < self._period:
-            return  # limitation du débit : on saute cette image
+            return  # trop d'images, on saute celle-ci
         self._last_publish = now
         raw_frame = frame.copy()
         with self._cond:
@@ -129,14 +128,14 @@ class FrameStreamer:
                 self._cond.notify_all()
 
     def _get_jpeg(self) -> Tuple[Optional[bytes], int]:
-        """Dernière image en JPEG et son numéro. Chaque image n'est encodée qu'une seule fois."""
+        """Dernière image en JPEG et son numéro. On n'encode chaque image qu'une fois."""
         with self._encode_lock:
             with self._cond:
                 raw_frame, frame_id = self._raw_frame, self._frame_id
             if raw_frame is not None and frame_id != self._encoded_id:
-                # raw_frame est une copie privée, jamais modifiée : pas besoin de verrou ici.
+                # raw_frame est une copie qu'on ne modifie jamais, pas besoin de verrou ici
                 ok, buf = cv2.imencode(".jpg", raw_frame, [cv2.IMWRITE_JPEG_QUALITY, self._quality])
-                self._encoded_id = frame_id  # même en cas d'échec, pour ne pas réessayer en boucle
+                self._encoded_id = frame_id  # même si ça a échoué, pour ne pas réessayer en boucle
                 if ok:
                     self._jpeg = buf.tobytes()
             return self._jpeg, frame_id
@@ -193,15 +192,15 @@ class FrameStreamer:
 
 
 def _full_fov_mode_size(picam2: Any) -> Optional[Tuple[int, int]]:
-    """picamera2 : taille du mode capteur le plus rapide parmi ceux qui couvrent tout le capteur
-    (None si les modes ne peuvent pas être lus : libcamera choisira alors seul)."""
+    """picamera2 : taille du mode le plus rapide parmi ceux qui couvrent tout le capteur
+    (None si on ne peut pas lire les modes, libcamera choisit alors tout seul)."""
     try:
         modes = picam2.sensor_modes
         area = lambda m: m["crop_limits"][2] * m["crop_limits"][3]
         widest = max(area(m) for m in modes)
         full_fov = [m for m in modes if area(m) == widest]
         return min(full_fov, key=lambda m: m["size"][0] * m["size"][1])["size"]
-    except Exception as exc:  # pilote/caméra exotique : on ne bloque pas le robot
+    except Exception as exc:  # pilote ou caméra bizarre, on ne bloque pas le robot pour ça
         print(f"[camera] modes capteur illisibles ({exc}), champ de vision non garanti")
         return None
 
@@ -216,11 +215,11 @@ class RobotCamera:
         try:
             from picamera import PiCamera
             from picamera.array import PiRGBArray
-            # Champ de vision maximal : sensor_mode=4 = capteur entier lu en binning 2x2
+            # On veut le champ de vision max : sensor_mode=4 lit tout le capteur en binning 2x2
             # (caméra v1 : 1296x972, v2 : 1640x1232), jusqu'à ~40 images/s.
-            # Le mode 2 (pleine résolution) est limité à 15 images/s : en demandant plus,
-            # le firmware bascule sur un mode rapide RECADRÉ au centre du capteur.
-            # Mode, résolution et cadence sont passés ensemble pour que le mode soit respecté.
+            # Le mode 2 (pleine résolution) est limité à 15 images/s. Si on demande plus, le
+            # firmware passe sur un mode rapide RECADRÉ au centre du capteur.
+            # Il faut passer mode, résolution et cadence ensemble sinon le mode n'est pas respecté.
             self._cam = PiCamera(sensor_mode=4, resolution=resolution, framerate=target_fps)
             self._cam.zoom = (0.0, 0.0, 1.0, 1.0)   # aucun recadrage numérique
             self._cam.vflip = vflip                 # flip par l'ISP, sans coût côté Python
@@ -232,16 +231,16 @@ class RobotCamera:
                 import libcamera
                 from picamera2 import Picamera2
                 self._cam = Picamera2()
-                # Sans précision, libcamera choisit le plus petit mode capteur (souvent recadré) :
-                # on impose un mode qui couvre tout le capteur, puis un recadrage maximal.
+                # Par défaut libcamera prend le plus petit mode (souvent recadré), donc on
+                # impose un mode qui couvre tout le capteur
                 raw_size = _full_fov_mode_size(self._cam)
-                # Durée d'image fixe : l'auto-exposition ne peut pas faire chuter la cadence.
+                # Durée d'image fixe pour que l'auto-exposition ne fasse pas chuter la cadence
                 frame_duration_us = int(1_000_000 / target_fps)
                 config = self._cam.create_video_configuration(
                     main={"size": resolution, "format": "RGB888"},  # RGB888 = octets BGR pour OpenCV
                     raw={"size": raw_size} if raw_size else None,
                     transform=libcamera.Transform(vflip=int(vflip)),
-                    buffer_count=1,  # moins d'images en file d'attente, donc moins de latence
+                    buffer_count=1,  # une seule image en attente pour avoir moins de latence
                     controls={"FrameRate": target_fps,
                               "FrameDurationLimits": (frame_duration_us, frame_duration_us)})
                 self._cam.configure(config)
@@ -255,7 +254,7 @@ class RobotCamera:
                 self._cam = cv2.VideoCapture(0)
                 self.kind = "opencv"
 
-        # Diffusion vers l'interface. Une erreur ici ne doit jamais empêcher le robot de rouler.
+        # Flux vers l'interface. Une erreur ici ne doit pas empêcher le robot de rouler
         self.streamer: Optional[FrameStreamer] = None
         self._publish_raw = True
         if stream:
@@ -275,7 +274,7 @@ class RobotCamera:
         return frame
 
     def publish(self, frame: np.ndarray) -> None:
-        """Diffuse une image (par ex. annotée avec les détections) à la place de l'image brute."""
+        """Diffuse cette image (avec les détections par exemple) à la place de l'image brute."""
         self._publish_raw = False
         if self.streamer is not None:
             self.streamer.publish(frame)
@@ -294,7 +293,7 @@ class RobotCamera:
         return cv2.flip(frame, 0) if self._vflip else frame
 
     def close(self) -> None:
-        """À appeler en fin de programme pour libérer la caméra et arrêter le flux."""
+        """À appeler à la fin pour libérer la caméra et arrêter le flux."""
         if self.streamer is not None:
             self.streamer.close()
             self.streamer = None
@@ -308,8 +307,8 @@ class RobotCamera:
 
 
 if __name__ == "__main__":
-    # Test rapide sur le robot : python vision/camera_pi.py
-    #   -> enregistre test_camera.png puis diffuse le flux jusqu'à Ctrl+C
+    # Pour tester sur le robot : python vision/camera_pi.py
+    # Ça enregistre test_camera.png puis ça diffuse le flux jusqu'à Ctrl+C
     cam = RobotCamera()
     print("Caméra :", cam.kind)
     img = cam.read()

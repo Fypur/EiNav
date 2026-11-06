@@ -1,4 +1,4 @@
-"""Arête bloquée par un obstacle : suppression du graphe et nouveau chemin, sur un robot simulé qui se déplace."""
+"""Tests de l'arête bloquée par un obstacle (on l'enlève du graphe et on recalcule le chemin), avec un robot simulé."""
 from __future__ import annotations
 
 import json
@@ -26,7 +26,7 @@ GAIN = 80.0  # cm/s à pleine vitesse
 ANGLE = {Direction.NORTH: 0.0, Direction.EAST: 90.0, Direction.SOUTH: 180.0, Direction.WEST: 270.0}
 
 
-# --- Graphe ----------------------------------------------------------------------------------
+# Graphe
 
 def test_arete_bloquee_dans_les_deux_sens() -> None:
     grid = Grid()
@@ -88,14 +88,14 @@ def test_mission_reroutee_repart_du_nœud_courant() -> None:
     assert mission.destination == (0, 2) and mission.start == (0, 0)
 
 
-# --- Monde simulé ----------------------------------------------------------------------------
+# Monde simulé
 
 class World(RobotConnection, ImageProcessor):
-    """Grille réelle : le robot avance selon ses vitesses de roue, voit les croisements et les obstacles."""
+    """Fausse grille où le robot avance selon ses vitesses de roue et voit les croisements et les obstacles."""
 
     def __init__(self, start: Tuple[int, int], heading: Direction, obstacles: Sequence[Tuple[float, float]] = (),
                  max_steps: int = 6000, camera_nearest: float = 2.0) -> None:
-        self.camera_nearest = camera_nearest  # en deçà, le croisement est sous le robot : invisible
+        self.camera_nearest = camera_nearest  # plus près que ça le croisement est sous le robot, donc invisible
         self.x, self.y = start[0] * SPACING, start[1] * SPACING
         self.angle = ANGLE[heading]
         self.obstacles = list(obstacles)
@@ -106,10 +106,10 @@ class World(RobotConnection, ImageProcessor):
         self.left = self.right = 0.0
         self.closest = math.inf
         self.deg_per_second = 180.0 / (utils.TURN_SPEED * utils.TURN_180_DURATION)
-        # Caméra calibrée : un croisement apparaît à la distance parcourue pendant l'approche.
+        # Caméra calibrée : on voit le croisement à la distance parcourue pendant l'approche
         self.camera_reach = utils.FORWARD_SPEED * utils.APPROACH_DURATION * GAIN
 
-    # --- Robot
+    # Robot
     def get_time(self) -> float:
         return self.t
 
@@ -118,7 +118,7 @@ class World(RobotConnection, ImageProcessor):
         self.steps += 1
         linear, angular = (self.left + self.right) / 2, (self.left - self.right) / 2
         self.angle = (self.angle + angular * self.deg_per_second * self.dt) % 360
-        if abs(angular) < 1e-9 and linear > 0:  # le suivi de ligne recale le robot sur la ligne
+        if abs(angular) < 1e-9 and linear > 0:  # le suivi de ligne remet le robot sur la ligne
             self.angle = round(self.angle / 90) * 90 % 360
             if self.angle % 180 == 0:
                 self.x = round(self.x / SPACING) * SPACING
@@ -141,7 +141,7 @@ class World(RobotConnection, ImageProcessor):
     def publish_frame(self, frame: np.ndarray) -> None:
         pass
 
-    # --- Liaison série
+    # Liaison série
     def send_wheel_speeds(self, fl: float, fr: float, rr: float, rl: float) -> None:
         self.left, self.right = fl, fr
 
@@ -155,7 +155,7 @@ class World(RobotConnection, ImageProcessor):
                 nearest = min(nearest, distance)
         return int(nearest)
 
-    # --- Caméra
+    # Caméra
     def process_frame(self, image_bgr: np.ndarray) -> LineDetection:
         dx, dy = self._forward()
         seen = False
@@ -163,7 +163,7 @@ class World(RobotConnection, ImageProcessor):
             for ny in range(5):
                 rx, ry = nx * SPACING - self.x, ny * SPACING - self.y
                 along, side = rx * dx + ry * dy, abs(rx * dy - ry * dx)
-                # Le croisement sous le robot n'est pas visible : la caméra regarde devant.
+                # La caméra regarde devant, elle ne voit pas le croisement sous le robot
                 seen = seen or (side < 6.0 and max(self.camera_nearest, self.camera_reach - 8.0) <= along <= self.camera_reach)
         return LineDetection(80, seen, 160, 76, np.zeros((52, 160), np.uint8))
 
@@ -192,7 +192,7 @@ class Recorder:
 
 
 class Watch(Recorder):
-    """Mesure l'écart réel au nœud quand le robot en repart, une fois l'arête bloquée."""
+    """Mesure l'écart au noeud quand le robot en repart après le blocage de l'arête."""
 
     def __init__(self, world: World, node: Tuple[int, int]) -> None:
         super().__init__()
@@ -208,7 +208,7 @@ class Watch(Recorder):
         self.previous = status.state
 
     def state_after_u_turn(self) -> str:
-        """État qui suit le demi-tour de retour au nœud."""
+        """État juste après le demi-tour de retour au noeud."""
         states = [s.state for s in self.statuses if s.blocked_edges]
         assert states[0] == RobotState.TURNING_180.name
         return next(state for state in states if state != RobotState.TURNING_180.name)
@@ -234,7 +234,7 @@ def _edges(nodes: Sequence[Tuple[int, int]]) -> set:
     return {frozenset(pair) for pair in zip(nodes, nodes[1:])}
 
 
-# --- Scénarios complets ------------------------------------------------------------------------
+# Scénarios complets
 
 def test_obstacle_au_milieu_d_une_arete_contourne_et_termine_la_livraison() -> None:
     world = World((0, 0), Direction.SOUTH, obstacles=[(0, 1.5)])
@@ -266,7 +266,7 @@ def test_arete_publiee_pour_l_interface_des_le_blocage() -> None:
 
 
 def test_loin_du_nœud_le_retour_se_fait_a_la_camera() -> None:
-    """Assez loin pour que la caméra revoie le nœud : pas d'avance à l'aveugle sur toute la distance."""
+    """Assez loin pour que la caméra revoie le noeud, donc pas besoin de revenir à l'aveugle."""
     world = World((0, 0), Direction.SOUTH, obstacles=[(0, 1.5)])
     mission, watch, _ = _watched(world, (0, 1))
     assert watch.state_after_u_turn() == RobotState.FOLLOWING.name
@@ -275,7 +275,7 @@ def test_loin_du_nœud_le_retour_se_fait_a_la_camera() -> None:
 
 
 def _close_to_node(**kwargs: Any) -> World:
-    """À 24 cm du nœud, le robot s'arrête à 4 cm de ce nœud : trop près pour que la caméra le revoie."""
+    """Obstacle à 24 cm du noeud : le robot s'arrête à 4 cm du noeud, trop près pour que la caméra le revoie."""
     world = World((0, 0), Direction.SOUTH, obstacles=[(0, 1 + 24.0 / SPACING)], **kwargs)
     assert 24.0 - utils.OBSTACLE_STOP_CM < world.camera_reach
     return world
@@ -293,7 +293,7 @@ def test_tout_pres_du_nœud_le_retour_se_fait_a_l_aveugle_sur_la_distance_parcou
 
 
 def test_retour_aveugle_ne_compte_pas_le_nœud_une_seconde_fois_en_le_quittant() -> None:
-    """Pire cas : la caméra voit encore le croisement sous le robot au moment de repartir."""
+    """Pire cas : la caméra voit encore le croisement sous le robot quand il repart."""
     world = _close_to_node(camera_nearest=-1.0)
     mission, watch, grid = _watched(world, (0, 1))
     assert grid.blocked_edges == [((0, 1), (0, 2))], "aucune arête coupée par erreur"
@@ -302,7 +302,7 @@ def test_retour_aveugle_ne_compte_pas_le_nœud_une_seconde_fois_en_le_quittant()
 
 
 def test_nœud_deja_visible_apres_le_demi_tour_detecte_quand_meme() -> None:
-    """Caméra voyant plus loin que prévu : le nœud est dans l'image dès la fin du demi-tour."""
+    """La caméra voit plus loin que prévu, le noeud est visible dès la fin du demi-tour."""
     class FarSighted(World):
         def step(self) -> bool:
             if self.get_distance_cm() <= utils.OBSTACLE_STOP_CM:
@@ -320,7 +320,7 @@ def test_obstacle_devant_le_robot_au_depart_tourne_sur_place_sans_demi_tour() ->
     mission, recorder, grid = _run(world, (0, 0), (0, 2), Direction.SOUTH)
     assert grid.blocked_edges == [((0, 0), (0, 1))]
     assert mission.destination_reached and mission.returned_home
-    # Il a quitté le nœud par une rotation de 90°, sans demi-tour inutile avant d'avoir bougé.
+    # Il repart du noeud avec une rotation de 90°, sans demi-tour inutile vu qu'il n'a pas bougé
     states = [s.state for s in recorder.statuses]
     assert RobotState.TURNING_MINUS_90.name in states or RobotState.TURNING_90.name in states
     delivery = states.index(RobotState.DELIVERING.name)
@@ -344,7 +344,7 @@ def test_obstacle_au_retour_recalcule_vers_le_point_de_depart() -> None:
 
 
 def test_retour_apres_detour_ne_repasse_pas_par_le_detour_inutile() -> None:
-    """Le retour est recalculé : il ne refait pas le chemin de l'aller, demi-tour au nœud compris."""
+    """Le retour est recalculé, il ne refait pas le chemin de l'aller."""
     world = World((0, 0), Direction.SOUTH, obstacles=[(0, 1.5)])
     _, recorder, _ = _run(world, (0, 0), (0, 2), Direction.SOUTH)
     nodes = recorder.nodes()
@@ -374,7 +374,7 @@ def test_aucun_chemin_arrete_la_mission_sur_place() -> None:
 
 
 def test_obstacle_de_chaque_cote_arrete_la_mission() -> None:
-    """Coincé : l'arête devant est bloquée, et un obstacle arrive derrière pendant le retour au nœud."""
+    """Robot coincé : arête bloquée devant et un obstacle arrive derrière pendant le retour au noeud."""
     class Trap(World):
         def step(self) -> bool:
             if self.obstacles == [(0, 1.5)] and self.angle % 360 == 0 and self.t > 5:
@@ -411,7 +411,7 @@ def test_pas_de_mesure_pas_d_arete_coupee() -> None:
 
 
 def test_blocage_pendant_un_virage_ne_coupe_rien() -> None:
-    """Un obstacle vu en tournant n'est pas sur la ligne suivie."""
+    """Un obstacle vu pendant une rotation n'est pas forcément sur la ligne suivie."""
     class SeenWhileTurning(World):
         def get_distance_cm(self) -> Optional[int]:
             return 15 if abs(self.left - self.right) > 1e-9 else 200
@@ -430,7 +430,7 @@ def test_sans_arete_bloquee_retour_par_le_meme_chemin() -> None:
     assert grid.blocked_edges == []
 
 
-# --- Programme complet et interface ------------------------------------------------------------
+# Programme complet et interface
 
 class Paced(World):
     finished = False
@@ -491,7 +491,7 @@ def test_arete_conservee_entre_missions_puis_debloquee(served: tuple) -> None:
     expected = [[[0, 1], [0, 2]]]
     assert _state(port)["blocked_edges"] == expected, "reste affichée à la fin de la mission"
 
-    # Mission suivante, repartant dans l'orientation réelle du robot : évite l'arête dès le départ.
+    # Mission suivante, avec la vraie orientation du robot : il doit éviter l'arête dès le départ
     assert _post(port, "/mission", {**MISSION, "heading": _state(port)["heading"]}) == 200
     _wait(lambda: _state(port)["state"] != "IDLE")
     route = [tuple(n) for n in _state(port)["route"]]
@@ -505,7 +505,7 @@ def test_arete_conservee_entre_missions_puis_debloquee(served: tuple) -> None:
 
 
 def test_point_de_depart_isole_signale_sans_planter(served: tuple) -> None:
-    """Deux obstacles autour du départ : plus aucun chemin, ni pendant la mission, ni à la suivante."""
+    """Deux obstacles autour du départ : plus de chemin, ni pendant la mission ni à la suivante."""
     world, port = served
     _wait(lambda: world.steps > 2)
     world.obstacles[:] = [(0, 18.0 / SPACING), (18.0 / SPACING, 0)]
@@ -517,7 +517,7 @@ def test_point_de_depart_isole_signale_sans_planter(served: tuple) -> None:
     assert state["blocked_edges"] == [[[0, 0], [0, 1]], [[0, 0], [1, 0]]]
     assert world.left == world.right == 0.0
 
-    # Ordre impossible dès le lancement : le programme ne doit pas s'arrêter pour autant.
+    # Ordre impossible dès le lancement, le programme ne doit pas planter pour autant
     world.obstacles.clear()
     assert _post(port, "/mission", {**order, "destination": [4, 4], "heading": state["heading"]}) == 200
     steps = world.steps
@@ -525,7 +525,7 @@ def test_point_de_depart_isole_signale_sans_planter(served: tuple) -> None:
     assert _state(port)["no_route"] and _state(port)["state"] == "IDLE"
     assert world.left == world.right == 0.0, "moteurs coupés"
 
-    # Une fois les arêtes débloquées, la mission suivante aboutit.
+    # Une fois les arêtes débloquées, la mission suivante doit marcher
     assert _post(port, "/map/reset", {}) == 200
     _wait(lambda: _state(port)["blocked_edges"] == [])
     assert _post(port, "/mission", {**order, "heading": state["heading"]}) == 200

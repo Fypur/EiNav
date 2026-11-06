@@ -1,4 +1,4 @@
-"""Navigation avec le vrai traitement d'image : images rendues depuis la position du robot, virages imprécis."""
+"""Tests de la navigation avec le vrai traitement d'image (images calculées depuis la position du robot, virages imprécis)."""
 from __future__ import annotations
 
 import math
@@ -23,10 +23,10 @@ ANGLE = {Direction.NORTH: 0.0, Direction.EAST: 90.0, Direction.SOUTH: 180.0, Dir
 ROWS, COLS = np.mgrid[0:128, 0:160]
 
 
-# --- Reconnaissance d'un croisement ------------------------------------------------------------
+# Reconnaissance d'un croisement
 
 def _frame(*polygons: Sequence[Sequence[Tuple[int, int]]]) -> np.ndarray:
-    """Polygones blancs sur un sol sombre, en coordonnées de l'image 160 x 128."""
+    """Polygones blancs sur un sol sombre, coordonnées dans l'image 160 x 128."""
     frame = np.full((128, 160, 3), 40, np.uint8)
     for polygon in polygons:
         cv2.fillPoly(frame, [np.array(polygon, np.int32)], (220, 220, 220))
@@ -37,7 +37,7 @@ def _intersection(frame: np.ndarray) -> bool:
     return ImageProcessor().process_frame(frame).is_intersection
 
 
-# Ligne en biais passant par un coin de la zone analysée, comme sur les images réelles capturées.
+# Ligne en biais qui passe par un coin de la zone analysée, comme sur les vraies images
 SLANTED_THROUGH_CORNER = [(35, 76), (55, 76), (15, 127), (-5, 127)]
 HUGGING_THE_EDGE = [(0, 76), (22, 76), (22, 127), (0, 127)]
 CENTERED_LINE = [(70, 0), (90, 0), (90, 127), (70, 127)]
@@ -65,13 +65,13 @@ def test_vrais_croisements_toujours_reconnus(branch: List[Tuple[int, int]]) -> N
 
 
 def test_t_vers_le_petit_cote_avec_la_ligne_decentree() -> None:
-    """Ligne décalée vers le côté de la branche : la bande reste assez large, ligne comprise."""
+    """Ligne décalée vers la branche, la bande reste assez large en comptant la ligne."""
     line = [(45, 0), (65, 0), (65, 127), (45, 127)]
     assert _intersection(_frame(line, [(0, 95), (65, 95), (65, 110), (0, 110)]))
 
 
 def test_t_en_bord_de_grille_avec_la_ligne_decalee_vers_sa_branche() -> None:
-    """Ne pas le voir décalerait le robot d'un nœud pour le reste de la mission."""
+    """Si on le rate, le robot a un noeud de décalage pour tout le reste de la mission."""
     line = [(100, 0), (120, 0), (120, 127), (100, 127)]
     assert _intersection(_frame(line, [(100, 95), (160, 95), (160, 110), (100, 110)]))
 
@@ -84,10 +84,10 @@ def test_seuil_reglable_depuis_l_interface() -> None:
     assert not _intersection(frame)
 
 
-# --- Contournement sur la grille rendue -----------------------------------------------------------
+# Contournement sur la grille rendue
 
 class RenderedWorld(RobotConnection):
-    """Le robot se déplace selon ses roues ; la caméra rend la grille vue depuis sa position réelle."""
+    """Le robot se déplace selon ses roues et la caméra calcule la grille vue depuis sa position."""
 
     def __init__(self, start: Tuple[int, int], heading: Direction, obstacles: Sequence[Tuple[float, float]],
                  turn_error: float = 1.0, max_steps: int = 1500) -> None:
@@ -148,7 +148,7 @@ class RenderedWorld(RobotConnection):
 
 
 class TurnWatcher:
-    """Note où le robot se trouve réellement quand il commence un virage de 90° ou une livraison."""
+    """Note où est vraiment le robot quand il commence un virage de 90° ou une livraison."""
     stop_requested = False
 
     def __init__(self, world: RenderedWorld) -> None:
@@ -185,7 +185,7 @@ KNOWN_LIMIT = pytest.mark.xfail(
     (2.7, 0.92), (2.7, 0.97), (2.7, 1.0), (2.7, 1.03), (2.7, 1.08),
 ])
 def test_jamais_de_virage_en_pleine_ligne_apres_un_contournement(obstacle: float, turn_error: float) -> None:
-    """Demi-tour et virage imprécis s'additionnent : le robot ne doit pas y voir un faux croisement."""
+    """Demi-tour et virage imprécis s'additionnent, le robot ne doit pas y voir un faux croisement."""
     _, watcher = _detour(obstacle, turn_error)
     assert watcher.misplaced == []
 

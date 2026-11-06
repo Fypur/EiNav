@@ -1,8 +1,7 @@
-"""Freinage devant un obstacle, à partir des mesures du capteur ultrason.
+"""Freinage devant un obstacle avec le capteur ultrason.
 
-Entre OBSTACLE_SLOWDOWN_CM et OBSTACLE_STOP_CM, la vitesse est proportionnelle à la distance
-qui reste à parcourir, sans descendre sous FORWARD_SPEED : plus lentement, les moteurs risqueraient
-de caler avant d'atteindre la distance d'arrêt.
+Entre OBSTACLE_SLOWDOWN_CM et OBSTACLE_STOP_CM la vitesse est proportionnelle à la distance
+restante. On ne descend pas sous FORWARD_SPEED, sinon les moteurs peuvent caler avant l'arrêt.
 """
 from __future__ import annotations
 
@@ -18,24 +17,25 @@ class ObstacleState(Enum):
     CLEAR = auto()
     SLOWING = auto()
     BLOCKED = auto()
-    NO_MEASURE = auto()  # capteur muet : ignoré, le robot poursuit sa mission
+    NO_MEASURE = auto()  # capteur muet, on l'ignore et on continue la mission
 
 
 class ObstacleStatus(NamedTuple):
     state: ObstacleState
-    distance_cm: Optional[int]  # None : aucune mesure valide
+    distance_cm: Optional[int]  # None si pas de mesure valide
 
 
 class ObstacleGuard:
-    """Transforme les mesures de distance en vitesse maximale autorisée.
+    """Calcule la vitesse max autorisée à partir des mesures de distance.
 
-    On garde le minimum des dernières mesures : un écho manqué se lit « rien devant » et ne doit
-    pas relancer le robot, alors qu'un obstacle proche doit le freiner dès la première mesure.
-    Une fois arrêté, le robot ne repart qu'au-delà d'OBSTACLE_RESUME_CM : sinon, une mesure
-    oscillant entre 20 et 21 cm le ferait avancer par à-coups vers l'obstacle.
+    On prend le min des dernières mesures. Un écho raté donne « rien devant » et ne doit pas
+    relancer le robot, alors qu'un obstacle proche doit le freiner dès la première mesure.
 
-    Sans aucune mesure parmi les dernières, le capteur est ignoré et le robot poursuit sa mission.
-    Une absence isolée ne suffit pas : un raté de la liaison ne doit pas effacer un obstacle proche.
+    Une fois arrêté, on ne repart qu'au-dessus d'OBSTACLE_RESUME_CM, sinon une mesure qui hésite
+    entre 20 et 21 cm fait avancer le robot par à-coups.
+
+    Si aucune des dernières mesures n'est valide on ignore le capteur et on continue la mission.
+    Une seule mesure ratée ne suffit pas, ça peut juste être un raté de la liaison.
     """
 
     def __init__(self) -> None:
@@ -47,7 +47,7 @@ class ObstacleGuard:
         return min((reading for reading in self._readings if reading is not None), default=None)
 
     def update(self, distance_cm: Optional[int]) -> float:
-        """Prend en compte une mesure (None ou 0 : pas de mesure) et renvoie la vitesse maximale."""
+        """Ajoute une mesure (None ou 0 si pas de mesure) et renvoie la vitesse max."""
         self._readings.append(distance_cm or None)
         nearest = self._nearest
         if nearest is None:

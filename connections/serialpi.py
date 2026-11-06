@@ -9,7 +9,7 @@ from connections.arduino import Arduino
 class Serial:
 
     def __init__(self, robot: Any = None) -> None:
-        """`robot` : instance Webots en simulation, None sur le robot réel."""
+        """robot : l'instance Webots en simulation, None sur le vrai robot."""
         self.simulation = robot is not None
 
         if self.simulation:
@@ -39,7 +39,7 @@ class Serial:
             self.arduino.SendSpeeds(*(int(speed * utils.PWM_MAX) for speed in (fl, fr, rr, rl)))
 
     def get_distance_cm(self) -> Optional[int]:
-        """Distance de l'obstacle devant le capteur. Webots n'a pas de capteur : rien n'y est jamais vu."""
+        """Distance de l'obstacle devant le capteur. Il n'y a pas de capteur dans Webots, donc on n'y voit jamais rien."""
         if self.simulation:
             return utils.ULTRASOUND_MAX_CM
         return self.arduino.GetDistance()

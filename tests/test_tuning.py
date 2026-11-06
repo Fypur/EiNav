@@ -41,7 +41,7 @@ def values() -> Dict[str, Any]:
     return {entry["key"]: entry["value"] for entry in tuning.describe()}
 
 
-# --- Valeurs ---------------------------------------------------------------------------------
+# Valeurs
 
 def test_les_defauts_respectent_leurs_propres_bornes() -> None:
     for entry in tuning.describe():
@@ -55,7 +55,7 @@ def test_chaque_reglage_existe_dans_son_module() -> None:
 
 @pytest.mark.parametrize("key,value", [
     ("KP", 1.5), ("KP", -0.1), ("KP", "0.2"), ("KP", True), ("KP", None), ("KP", float("nan")), ("KP", float("inf")),
-    ("KP", 10 ** 400),  # json.loads accepte les entiers géants, que math.isfinite refuse par une exception
+    ("KP", 10 ** 400),  # json.loads accepte les entiers énormes, math.isfinite lève une exception dessus
     ("FORWARD_SPEED", 0.0),  # diviseur dans Control.approach_duration
     ("RAMP_TIME_CONSTANT", 0.0),  # diviseur dans Control._drive
     ("BINARY_THRESHOLD", 300), ("BINARY_THRESHOLD", 140.5), ("TIME_STEP_MS", 0),
@@ -75,7 +75,7 @@ def test_changement_tout_ou_rien() -> None:
     assert robot_utils.BASE_SPEED == before
 
 
-# --- Effet réel sur le robot -----------------------------------------------------------------
+# Effet réel sur le robot
 
 def test_vitesse_appliquee_pendant_la_mission() -> None:
     serial = FakeSerial()
@@ -141,7 +141,7 @@ def test_approche_utilise_la_vitesse_d_approche() -> None:
 
 
 def test_roues_jamais_au_dela_du_maximum() -> None:
-    """Au-delà de 255, analogWrite tronque sur 8 bits : la roue ralentirait au lieu d'accélérer."""
+    """Au-dessus de 255, analogWrite tronque sur 8 bits et la roue ralentit au lieu d'accélérer."""
     tuning.update({"BASE_SPEED": 1.0, "KP": 1.0})
     serial = FakeSerial()
     fl, fr, rr, rl = settled(Control(serial), serial, error=1.0)  # type: ignore[arg-type]
@@ -178,7 +178,7 @@ def test_vision_supporte_les_bornes_de_zone(ratio: float) -> None:
     processor.annotate(_cross(), processor.process_frame(_cross()))
 
 
-# --- Conservation ----------------------------------------------------------------------------
+# Conservation
 
 def test_conserve_au_redemarrage_et_seulement_les_differences() -> None:
     tuning.update({"KP": 0.33, "TIME_STEP_MS": 20, "BASE_SPEED": tuning._DEFAULTS["BASE_SPEED"]})
@@ -217,7 +217,7 @@ def test_valeur_invalide_dans_le_fichier_ignoree_les_autres_gardees() -> None:
 
 
 def test_chargement_ne_reecrit_pas_le_fichier() -> None:
-    """Une coupure pendant le démarrage ne doit pas faire perdre de réglages."""
+    """Une coupure au démarrage ne doit pas faire perdre les réglages."""
     content = json.dumps({"KP": 0.33, "INCONNU": 1, "BASE_SPEED": 0.7})
     tuning.SETTINGS_FILE.write_text(content, encoding="utf-8")
     tuning.load()
@@ -231,7 +231,7 @@ def test_echec_d_ecriture_ne_bloque_pas_le_reglage(monkeypatch: pytest.MonkeyPat
     assert robot_utils.KP == 0.33
 
 
-# --- Serveur ---------------------------------------------------------------------------------
+# Serveur
 
 @pytest.fixture
 def port() -> Any:
@@ -281,10 +281,10 @@ def test_autre_site_ne_peut_pas_changer_les_reglages(port: int) -> None:
     assert robot_utils.KP == tuning._DEFAULTS["KP"]
 
 
-# --- Lancement direct ------------------------------------------------------------------------
+# Lancement direct
 
 def test_camera_pi_importable_comme_script(tmp_path: Path) -> None:
-    """`python vision/camera_pi.py` place vision/ sur le chemin, pas la racine du projet."""
+    """python vision/camera_pi.py met vision/ dans le path, pas la racine du projet."""
     code = (
         "import runpy, sys; sys.path[0] = sys.argv[1]; "
         "ns = runpy.run_path(sys.argv[2], run_name='camera_pi_script'); "

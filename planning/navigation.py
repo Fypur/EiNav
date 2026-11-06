@@ -51,20 +51,20 @@ class Grid:
 
     @property
     def blocked_edges(self) -> List[Tuple[Position, Position]]:
-        """Arêtes supprimées du graphe, chacune avec ses deux nœuds dans l'ordre croissant."""
+        """Arêtes enlevées du graphe (les 2 noeuds de chaque arête sont triés)."""
         return sorted(self._blocked)
 
     def _set_edge(self, a: Position, b: Position, is_open: bool) -> None:
         (ax, ay), (bx, by) = sorted((a, b))
-        if ax == bx:  # verticale : a est au nord de b
+        if ax == bx:  # verticale, a est au nord de b
             self.grid[ay][ax].bottom = is_open
             self.grid[by][bx].top = is_open
-        else:  # horizontale : a est à l'ouest de b
+        else:  # horizontale, a est à l'ouest de b
             self.grid[ay][ax].right = is_open
             self.grid[by][bx].left = is_open
 
     def block_edge(self, a: Position, b: Position) -> None:
-        """Supprime du graphe l'arête entre deux nœuds voisins, dans les deux sens."""
+        """Enlève l'arête entre deux noeuds voisins, dans les deux sens."""
         self._set_edge(a, b, False)
         self._blocked.add((min(a, b), max(a, b)))
 
@@ -250,10 +250,10 @@ class Navigation:
 
 
 class Mission:
-    """Aller-retour sur un chemin : à destination, demi-tour et retour par le même chemin.
+    """Aller-retour sur un chemin : demi-tour à destination puis retour par le même chemin.
 
-    `on_intersection` est appelé à chaque arrêt sur une intersection. Le robot démarre posé sur
-    le premier nœud : le premier appel a donc lieu au lancement, sans attendre la vision.
+    on_intersection est appelé à chaque arrêt sur un croisement. Le robot démarre sur le premier
+    noeud, donc le premier appel se fait au lancement sans attendre la vision.
     """
 
     def __init__(self, path: List[Position], heading: Optional[Direction] = None) -> None:
@@ -264,37 +264,36 @@ class Mission:
         self.route = list(path)
         self.heading = heading  # orientation courante du robot
         self.position: Position = path[0]  # dernier nœud atteint
-        self.destination_reached = False  # levé à l'arrivée à destination
-        self.returned_home = False  # levé au retour sur le point de départ
-        self.line_lost = False  # levé si la mission s'arrête faute de voir la ligne
-        self.no_route = False  # levé si la mission s'arrête faute de chemin
-        self.rerouted = False  # le chemin a changé à cause d'une arête bloquée
+        self.destination_reached = False  # True une fois à destination
+        self.returned_home = False  # True une fois revenu au départ
+        self.line_lost = False  # True si on s'arrête car ligne perdue
+        self.no_route = False  # True si on s'arrête car plus de chemin
+        self.rerouted = False  # True si le chemin a changé à cause d'une arête bloquée
         self._index = 0
 
     @property
     def next_node(self) -> Optional[Position]:
-        """Nœud vers lequel le robot se dirige (None si la mission est finie)."""
+        """Noeud vers lequel va le robot (None si la mission est finie)."""
         return None if self.returned_home else self.route[self._index]
 
     @property
     def target(self) -> Position:
-        """Point que le robot cherche à atteindre : la destination, puis le point de départ."""
+        """Là où le robot doit aller : la destination, puis le départ au retour."""
         return self.start if self.destination_reached else self.destination
 
     def reroute(self, path: List[Position]) -> None:
-        """Remplace le chemin. `path` part du nœud où le prochain `on_intersection` aura lieu."""
+        """Change le chemin. path doit partir du noeud du prochain on_intersection."""
         self.route = list(path)
         self._index = 0
         self.rerouted = True
 
     def on_intersection(self) -> Optional[Direction]:
-        """Enregistre l'arrivée sur le nœud visé et renvoie la direction à prendre (None : fini)."""
+        """Arrivée sur le noeud visé, renvoie la direction à prendre (None si c'est fini)."""
         self.position = self.route[self._index]
 
         if self._index == len(self.route) - 1 and not self.destination_reached:
             self.destination_reached = True
-            # Chemin inversé : la première direction est l'opposée de celle d'arrivée,
-            # donc un demi-tour.
+            # On inverse le chemin, la première direction est donc un demi-tour
             self.route.reverse()
             self._index = 0
 
